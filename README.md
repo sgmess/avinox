@@ -7,7 +7,7 @@ Try it without an account at `/demo` (made-up rides).
 ## Where the data comes from
 
 The Avinox Ride app keeps a raw recording of every ride on Android at
-`Android/data/com.avinox.ride/files/ebike/data/…/cloud_ride_rec_*.proto`. Copy that folder to a computer (USB file transfer, or `adb pull`) and drop it on the Import page. Rides already imported are skipped, so the whole folder can be dropped again each time.
+`Android/data/com.avinox.ride/files/ebike/data/…/cloud_ride_rec_*.proto`. Copy that folder to a computer (USB file transfer, or `adb pull`) and drop it on the Import page. Rides already imported are skipped, so the whole folder can be dropped again each time. Select **Update existing rides** to replace partial imports or recalculate rides after a fix; names and notes are kept.
 
 The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's summary and a thinned route (about 600 points) are sent to the server. The format isn't documented by DJI: it's a 251-byte header then `0x02EB` frames of protobuf samples, with field numbers from the community's reverse engineering (Avinox Ride Explorer; [lucad87/avinox-setup-app](https://github.com/lucad87/avinox-setup-app), MIT). Assist modes are stored as numbers (1 Eco, 2 Trail, 3 Turbo, 4 Auto, 20+ custom, as far as riders have worked out), and Settings lets a rider rename them. No per-cell battery voltages have been found in the files, so there's no cell balance chart; battery health is estimated instead.
 
@@ -44,6 +44,9 @@ Use its own Firebase project (Blaze plan).
 3. App Hosting: create a backend from this repo, branch `main`, and link it to a Firebase web app so App Hosting passes `FIREBASE_WEBAPP_CONFIG` at build time (`next.config.ts` hands it to the browser).
 
 It needs no secrets.
+
+The map includes a public CARTO basemap key. To use a different key, set
+`NEXT_PUBLIC_CARTO_API_KEY` at build time (locally or in App Hosting's `env` configuration).
 
 ## Layout
 

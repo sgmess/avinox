@@ -12,6 +12,8 @@ export function SettingsForm({ settings, seenModes, email }: { settings: Setting
   const router = useRouter();
   const [s, setS] = useState(settings);
   const [state, setState] = useState<"" | "saving" | "saved" | "error">("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const modes = [...new Set([...seenModes, "1", "2", "3", "4"])].sort((a, b) => Number(a) - Number(b));
 
   async function save(e: React.FormEvent) {
@@ -29,10 +31,18 @@ export function SettingsForm({ settings, seenModes, email }: { settings: Setting
   }
 
   async function wipe() {
-    if (!confirm("Delete every ride from your account? You can import the files again.")) return;
-    await fetch("/api/rides", { method: "DELETE" });
-    router.replace("/");
-    router.refresh();
+    if (deleting || !confirm("Delete every ride from your account? You can import the files again.")) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const res = await fetch("/api/rides", { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      router.replace("/");
+      router.refresh();
+    } catch {
+      setDeleteError("Couldn't delete all rides. Some may remain. Check your connection and sign-in, then try again.");
+      setDeleting(false);
+    }
   }
 
   return (
@@ -88,13 +98,14 @@ export function SettingsForm({ settings, seenModes, email }: { settings: Setting
       </form>
       <Card title="Account" sub={email ? `Signed in as ${email}` : undefined}>
         <div className="flex flex-wrap gap-2.5">
-          <button type="button" onClick={out} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold">
+          <button type="button" onClick={out} disabled={deleting} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold">
             Sign out
           </button>
-          <button type="button" onClick={wipe} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold text-hot">
-            Delete all rides
+          <button type="button" onClick={wipe} disabled={deleting} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold text-hot disabled:opacity-50">
+            {deleting ? "Deleting…" : "Delete all rides"}
           </button>
         </div>
+        {deleteError && <p role="alert" className="mt-2 text-hot">{deleteError}</p>}
       </Card>
     </div>
   );

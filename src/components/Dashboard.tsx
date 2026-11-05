@@ -181,7 +181,7 @@ function ModesCard({ st, units }: { st: Stats; units: Units }) {
   const max = Math.max(1, ...modes.map((m) => m.seconds));
   const total = modes.reduce((a, m) => a + m.seconds, 0);
   const top = [...modes].sort((a, b) => b.seconds - a.seconds)[0];
-  const costed = modes.filter((m) => m.whPerKm && m.name !== "Off");
+  const costed = modes.filter((m) => m.whPerKm && Number(m.value) !== 0);
   const cheap = costed.length > 1 ? costed.reduce((a, b) => (a.whPerKm! < b.whPerKm! ? a : b)) : null;
   const dear = costed.length > 1 ? costed.reduce((a, b) => (a.whPerKm! > b.whPerKm! ? a : b)) : null;
   return (

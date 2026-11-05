@@ -23,8 +23,9 @@ export const fmtHeight = (m: number, u: Units) => `${n(height(m, u))} ${heightUn
 export const fmtSpeed = (kmh: number, u: Units, dp = 1) => `${n(dist(kmh, u), dp)} ${speedUnit(u)}`;
 
 export function fmtDuration(s: number) {
-  const h = Math.floor(s / 3600);
-  const m = Math.round((s % 3600) / 60);
+  const minutes = Math.round(s / 60);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
   if (h === 0) return `${m} min`;
   return `${h}h ${String(m).padStart(2, "0")}`;
 }

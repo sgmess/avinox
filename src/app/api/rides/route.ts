@@ -22,7 +22,8 @@ export async function POST(req: Request) {
   if (!summary) return NextResponse.json({ error: "That ride couldn't be read" }, { status: 400 });
   const track = cleanTrack(body?.track);
   const batch = db.batch();
-  batch.set(ridesCol(viewer.uid).doc(summary.id), summary, { merge: true });
+  // Replace computed maps as whole fields, retaining the stored name and notes.
+  batch.set(ridesCol(viewer.uid).doc(summary.id), summary, { mergeFields: Object.keys(summary) });
   batch.set(tracksCol(viewer.uid).doc(summary.id), { points: track });
   await batch.commit();
   return NextResponse.json({ ok: true, id: summary.id });

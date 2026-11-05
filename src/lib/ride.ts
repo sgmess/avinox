@@ -70,7 +70,13 @@ export function rideId(file: Pick<RideFile, "serial" | "rideId" | "start">) {
 }
 
 export function summarise(file: RideFile): { summary: RideSummary; track: TrackPoint[] } {
-  const s = file.samples;
+  // Ignore duplicate and backwards timestamps without moving the time baseline.
+  let latest = -Infinity;
+  const s = file.samples.filter((sample) => {
+    if (!Number.isFinite(sample.t) || sample.t <= latest) return false;
+    latest = sample.t;
+    return true;
+  });
   const modeS: Record<string, number> = {};
   const modeKm: Record<string, number> = {};
   const modeMotorWh: Record<string, number> = {};
@@ -95,7 +101,7 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
   for (let i = 0; i < s.length; i++) {
     const a = s[i];
     const prev = s[i - 1];
-    const dt = prev && a.t > prev.t ? Math.min(a.t - prev.t, MAX_GAP_S) : i === 0 ? 0 : 1;
+    const dt = prev ? Math.min(a.t - prev.t, MAX_GAP_S) : 0;
     const dKm = prev ? Math.max(0, a.km - prev.km) : 0;
     const moving = a.speed > MOVING_KMH;
 
@@ -123,7 +129,7 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
       hrN++;
       hrMax = Math.max(hrMax ?? 0, a.heartRate);
     }
-    if (a.battery !== null && a.battery > 0 && a.battery <= 100) {
+    if (a.battery !== null && a.battery >= 0 && a.battery <= 100) {
       if (batteryStart === null) batteryStart = a.battery;
       batteryEnd = a.battery;
     }
@@ -181,15 +187,16 @@ function climb(s: Sample[], dir: 1 | -1) {
 
 function thin(s: Sample[], start: number): TrackPoint[] {
   if (!s.length) return [];
-  const step = Math.max(1, Math.ceil(s.length / TRACK_POINTS));
+  const count = Math.min(s.length, TRACK_POINTS);
+  const indices = Array.from({ length: count }, (_, i) => Math.floor(i * (s.length - 1) / Math.max(1, count - 1)));
   const out: TrackPoint[] = [];
-  for (let i = 0; i < s.length; i += step) {
+  for (const [j, i] of indices.entries()) {
     // Average the powers over the step so short bursts still show.
-    const chunk = s.slice(i, i + step);
+    const chunk = s.slice(i, indices[j + 1] ?? s.length);
     const mean = (f: (x: Sample) => number) => chunk.reduce((t, x) => t + f(x), 0) / chunk.length;
     const a = s[i];
     out.push({
-      km: round(a.km, 3),
+      km: round(a.km - s[0].km, 3),
       lat: a.lat === null ? null : round(a.lat, 6),
       lng: a.lng === null ? null : round(a.lng, 6),
       alt: a.altitude === null ? null : round(a.altitude, 1),

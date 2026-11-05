@@ -14,15 +14,28 @@ const RIDE_DIR = "Android/data/com.avinox.ride/files/ebike/data";
 export function Importer() {
   const [st, setSt] = useState<Status>(START);
   const [over, setOver] = useState(false);
+  const [updateExisting, setUpdateExisting] = useState(false);
   const files = useRef<HTMLInputElement>(null);
   const folder = useRef<HTMLInputElement>(null);
   const busy = st.phase === "reading" || st.phase === "saving";
 
   async function run(list: File[]) {
     // A ride folder holds other files too: keep only ride recordings.
-    const candidates = list.filter((f) => /\.proto$/i.test(f.name) || /cloud_ride_rec/i.test(f.name));
+    // Prefer the largest copy when a folder contains multiple versions of a ride.
+    const candidates = list.filter((f) => /\.proto$/i.test(f.name) || /cloud_ride_rec/i.test(f.name)).sort((a, b) => b.size - a.size);
     setSt({ ...START, phase: "reading", found: candidates.length });
-    const seen = new Set<string>(((await fetch("/api/rides").then((r) => r.json()).catch(() => ({ ids: [] }))) as { ids: string[] }).ids);
+    let seen: Set<string>;
+    try {
+      const res = await fetch("/api/rides");
+      if (!res.ok) throw new Error("Couldn't check existing rides");
+      const data = await res.json() as { ids?: unknown };
+      if (!Array.isArray(data.ids) || !data.ids.every((id) => typeof id === "string")) throw new Error("Invalid ride list");
+      seen = new Set(data.ids as string[]);
+    } catch {
+      setSt({ ...START, phase: "done", found: candidates.length, failed: ["Couldn't check existing rides. Check your connection and sign-in, then choose your files again."] });
+      return;
+    }
+    const queued = new Set<string>();
 
     const jobs: { name: string; body: string; label: string }[] = [];
     let skipped = 0;
@@ -39,11 +52,11 @@ export function Importer() {
           skipped++;
           continue;
         }
-        if (seen.has(summary.id)) {
+        if (queued.has(summary.id) || (!updateExisting && seen.has(summary.id))) {
           skipped++;
           continue;
         }
-        seen.add(summary.id);
+        queued.add(summary.id);
         jobs.push({ name: f.name, body: JSON.stringify({ summary, track }), label: fmtDay(summary.start) });
       } catch (e) {
         failed.push(`${f.name}: ${(e as Error).message}`);
@@ -89,7 +102,7 @@ export function Importer() {
         </svg>
         <div>
           <div className="font-display text-lg font-semibold">Drop your ride files or the whole data folder here</div>
-          <div className="mt-1 text-muted">Files named cloud_ride_rec_….proto. Rides you&apos;ve already imported are skipped.</div>
+          <div className="mt-1 text-muted">Files named cloud_ride_rec_….proto. Existing rides are skipped unless you choose to update them.</div>
         </div>
         <div className="flex flex-wrap justify-center gap-2.5">
           <button type="button" disabled={busy} onClick={() => folder.current?.click()} className="min-h-11 rounded-[10px] bg-accent px-4 font-semibold text-on-accent disabled:opacity-50">
@@ -99,14 +112,27 @@ export function Importer() {
             Choose files
           </button>
         </div>
-        <input ref={files} type="file" multiple className="hidden" onChange={(e) => e.target.files && run([...e.target.files])} />
+        <label className="flex min-h-11 items-center gap-2 text-sm text-soft">
+          <input type="checkbox" checked={updateExisting} disabled={busy} onChange={(e) => setUpdateExisting(e.target.checked)} />
+          Update existing rides (keeps names and notes)
+        </label>
+        <p className="max-w-xl text-xs text-muted">Use this with complete recordings to replace an earlier partial import or recalculate a ride after a fix.</p>
+        <input ref={files} type="file" multiple className="hidden" onChange={(e) => {
+          const selected = [...(e.target.files ?? [])];
+          e.target.value = "";
+          if (selected.length) void run(selected);
+        }} />
         <input
           ref={folder}
           type="file"
           className="hidden"
           // Picks a whole folder, subfolders included.
           {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-          onChange={(e) => e.target.files && run([...e.target.files])}
+          onChange={(e) => {
+            const selected = [...(e.target.files ?? [])];
+            e.target.value = "";
+            if (selected.length) void run(selected);
+          }}
         />
       </div>
 
@@ -116,7 +142,7 @@ export function Importer() {
           {st.phase !== "reading" && (
             <>
               <p className="font-display text-lg font-semibold">
-                {st.phase === "done" ? `Saved ${n(st.saved)} new ${st.saved === 1 ? "ride" : "rides"}` : `Saving ${n(st.saved)} of ${n(st.fresh)} rides…`}
+                {st.phase === "done" ? `Saved ${n(st.saved)} ${st.saved === 1 ? "ride" : "rides"}` : `Saving ${n(st.saved)} of ${n(st.fresh)} rides…`}
               </p>
               <div className="mt-2 h-2 overflow-hidden rounded bg-line">
                 <div className="h-2 bg-accent transition-all" style={{ width: `${st.fresh ? (st.saved / st.fresh) * 100 : 100}%` }} />
@@ -156,7 +182,7 @@ export function Importer() {
             On the computer, open the phone and go to <code className="rounded bg-sunk px-1.5 py-0.5 text-[13px] text-ink">{RIDE_DIR}</code>.
           </li>
           <li>
-            Copy the whole <b className="text-ink">data</b> folder to your computer, then press <b className="text-ink">Choose a folder</b> above and pick it. Next time, copy it again: only new rides are added.
+            Copy the whole <b className="text-ink">data</b> folder to your computer, then press <b className="text-ink">Choose a folder</b> above and pick it. Next time, copy it again: only new rides are added unless you select Update existing rides.
           </li>
         </ol>
         <details className="mt-4 text-[13px] text-muted">

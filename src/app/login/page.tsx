@@ -3,9 +3,7 @@ import { redirect } from "next/navigation";
 import { getViewer } from "@/lib/auth";
 import { AuthSplit } from "@/components/marketing/AuthSplit";
 import { LoginForm } from "./LoginForm";
-
-/** Only same-site paths, so a crafted ?next= can't send people elsewhere. */
-const safeNext = (next: string | undefined) => (next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+import { safeNext } from "@/lib/navigation";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const next = safeNext((await searchParams).next);

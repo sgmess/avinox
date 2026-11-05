@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { RideSummary, TrackPoint } from "@/lib/ride";
@@ -35,6 +35,11 @@ export function RideView({
   const s = useMemo(() => ({ ...settings, units }), [settings, units]);
   const [name, setName] = useState(ride.name ?? "");
   const [notes, setNotes] = useState(ride.notes ?? "");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveQueue = useRef(Promise.resolve());
+  const saveVersion = useRef(0);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [colourBy, setColourBy] = useState<ColourBy>("mode");
   const [cursor, setCursor] = useState<number | null>(null);
 
@@ -44,16 +49,37 @@ export function RideView({
 
   const segments = useMemo(() => colourSegments(track, s, colourBy), [track, s, colourBy]);
 
-  function save(patch: { name?: string; notes?: string }) {
-    if (demo) return;
-    fetch(`/api/rides/${ride.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) }).catch(() => undefined);
+  function save() {
+    if (demo || deleting) return;
+    const version = ++saveVersion.current;
+    const body = JSON.stringify({ name, notes });
+    setSaveStatus("saving");
+    // Keep blur saves in order so an older request cannot overwrite newer edits.
+    saveQueue.current = saveQueue.current.then(async () => {
+      try {
+        const res = await fetch(`/api/rides/${ride.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body });
+        if (!res.ok) throw new Error("Save failed");
+        if (version === saveVersion.current) setSaveStatus("saved");
+      } catch {
+        if (version === saveVersion.current) setSaveStatus("error");
+      }
+    });
   }
 
   async function remove() {
-    if (demo || !confirm("Delete this ride? You can import its file again later.")) return;
-    await fetch(`/api/rides/${ride.id}`, { method: "DELETE" });
-    router.replace("/");
-    router.refresh();
+    if (demo || deleting || !confirm("Delete this ride? You can import its file again later.")) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await saveQueue.current;
+      const res = await fetch(`/api/rides/${ride.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      router.replace("/");
+      router.refresh();
+    } catch {
+      setDeleteError("Couldn't delete this ride. Check your connection and sign-in, then try again.");
+      setDeleting(false);
+    }
   }
 
   const compare = (v: number, typ: number | undefined | null, more: string, less: string, lowerIsBetter = false) => {
@@ -99,9 +125,14 @@ export function RideView({
               <span className="sr-only">Ride name</span>
               <input
                 value={name}
+                disabled={deleting}
                 placeholder={defaultName(ride)}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() => name !== (ride.name ?? "") && save({ name })}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  saveVersion.current++;
+                  setSaveStatus("idle");
+                }}
+                onBlur={save}
                 className="w-full max-w-[640px] rounded-lg bg-transparent font-display text-3xl font-semibold outline-none placeholder:text-ink focus:bg-sunk focus:px-2"
               />
             </label>
@@ -112,12 +143,26 @@ export function RideView({
             Export GPX
           </button>
           {!demo && (
-            <button type="button" onClick={remove} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold text-hot hover:bg-white/5">
-              Delete
+            <button type="button" onClick={remove} disabled={deleting} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold text-hot hover:bg-white/5 disabled:opacity-50">
+              {deleting ? "Deleting…" : "Delete"}
             </button>
           )}
         </div>
       </div>
+
+      {!demo && (
+        <div aria-live="polite" className="text-sm text-muted">
+          {saveStatus === "saving" && "Saving changes…"}
+          {saveStatus === "saved" && "Changes saved"}
+          {saveStatus === "error" && (
+            <p role="alert" className="text-hot">
+              Couldn&apos;t save your changes. Check your connection and sign-in. Your edits are still here.{" "}
+              <button type="button" onClick={save} disabled={deleting} className="min-h-11 underline">Retry save</button>
+            </p>
+          )}
+          {deleteError && <p role="alert" className="text-hot">{deleteError}</p>}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line md:grid-cols-3 xl:grid-cols-6">
         {stats.map((x) => (
@@ -206,8 +251,13 @@ export function RideView({
               <span className="sr-only">Notes</span>
               <textarea
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                onBlur={() => notes !== (ride.notes ?? "") && save({ notes })}
+                disabled={deleting}
+                onChange={(e) => {
+                  setNotes(e.target.value);
+                  saveVersion.current++;
+                  setSaveStatus("idle");
+                }}
+                onBlur={save}
                 placeholder="Tyre pressures, trail conditions, what you changed on the bike…"
                 className="min-h-[96px] w-full rounded-lg border border-edge p-2.5 text-sm"
               />

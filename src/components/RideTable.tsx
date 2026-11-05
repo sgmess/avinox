@@ -27,10 +27,11 @@ export function RideTable({
 }) {
   const u = settings.units;
   const [q, setQ] = useState("");
-  const [minKm, setMinKm] = useState(u === "mi" ? 6 * KM_PER_MI : 10);
+  const [distanceFilter, setDistanceFilter] = useState(2);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "start", desc: true });
   const [shown, setShown] = useState(PAGE);
   const short = u === "mi" ? [0, KM_PER_MI, 6 * KM_PER_MI] : [0, 1, 10];
+  const minKm = short[distanceFilter];
 
   const rows = useMemo(() => {
     const value = (r: RideSummary): number => {
@@ -114,7 +115,7 @@ export function RideTable({
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search, e.g. 08/10/2026" className="w-44 bg-transparent text-[13px] outline-none" />
           </label>
           {short.map((k, i) => (
-            <button key={i} type="button" className={chip(Math.abs(minKm - k) < 0.01)} onClick={() => setMinKm(k)}>
+            <button key={i} type="button" className={chip(distanceFilter === i)} onClick={() => setDistanceFilter(i)}>
               {i === 0 ? "All" : `${u === "mi" ? n(k / KM_PER_MI) : n(k)} ${distUnit(u)} +`}
             </button>
           ))}

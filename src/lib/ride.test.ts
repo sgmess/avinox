@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseRide } from "./parseRide.ts";
 import { summarise } from "./ride.ts";
-import { computeStats } from "./stats.ts";
+import { batteryDrop, computeStats, modeParts, packWh } from "./stats.ts";
 import { demoRides } from "./demo.ts";
 import { DEFAULT_SETTINGS, cleanSettings, modeName } from "./settings.ts";
 
@@ -128,10 +128,55 @@ test("dashboard stats from a year and a half of rides", () => {
   assert.ok(st.records.longest);
 });
 
+test("a ride ending at zero battery keeps its full battery consumption", () => {
+  const drained = rows.map((row, i) => ({ ...row, battery: i === rows.length - 1 ? 0 : 20 }));
+  const { summary } = summarise(parseRide(buildFile(drained)));
+  assert.equal(summary.batteryStart, 20);
+  assert.equal(summary.batteryEnd, 0);
+  assert.equal(batteryDrop(summary), 20);
+  assert.equal(packWh(summary, DEFAULT_SETTINGS, 0.8), DEFAULT_SETTINGS.batteryWh * 0.2);
+});
+
 test("settings are cleaned", () => {
   const s = cleanSettings({ units: "km", batteryWh: "600", modeNames: { "20": " Hills ", bad: "x" }, bikeName: 5 });
   assert.deepEqual(s, { units: "km", batteryWh: 600, bikeName: "", modeNames: { "20": "Hills" } });
   assert.equal(modeName(s, 20), "Hills");
   assert.equal(modeName(s, 21), "Custom 2");
   assert.equal(modeName(s, 1), "Eco");
+});
+
+test("duplicate and backwards samples do not change totals or the track", () => {
+  const file = parseRide(buildFile(rows.slice(0, 10)));
+  const expected = summarise(file);
+  const duplicate = { ...file.samples[1], motorPower: 5000, battery: 0 };
+  const backwards = { ...file.samples[0], motorPower: 5000, battery: 0 };
+  file.samples.splice(2, 0, duplicate, backwards);
+  assert.deepEqual(summarise(file), expected);
+});
+
+test("thinned tracks retain both endpoints and stay within 600 points", () => {
+  for (const length of [1, 2, 599, 600, 601, 602, 1200, 1801]) {
+    const input = Array.from({ length }, (_, i) => ({ ...rows[0], t: t0 + i, km: 10 + i / 100 }));
+    const file = parseRide(buildFile(input));
+    const { summary, track } = summarise(file);
+    assert.ok(track.length <= 600);
+    assert.equal(track[0].s, 0);
+    assert.equal(track[0].km, 0);
+    assert.equal(track.at(-1)!.s, length - 1);
+    assert.equal(track.at(-1)!.km, summary.km);
+    assert.equal(track.at(-1)!.lat, file.samples.at(-1)!.lat);
+    assert.equal(track.at(-1)!.lng, file.samples.at(-1)!.lng);
+  }
+});
+
+test("renaming modes does not change assisted time, shares or range eligibility", () => {
+  const { summary } = summarise(parseRide(buildFile(rows)));
+  const ride = { ...summary, modeS: { "0": 600, "1": 600 }, modeKm: { "0": 5, "1": 5 }, modeMotorWh: { "0": 0, "1": 50 } };
+  const renamed = { ...DEFAULT_SETTINGS, modeNames: { "0": "Coasting", "1": "Off" } };
+  const before = computeStats([ride], DEFAULT_SETTINGS);
+  const after = computeStats([ride], renamed);
+  assert.equal(after.totals.assistedS, 600);
+  assert.equal(after.totals.assistedS, before.totals.assistedS);
+  assert.deepEqual(modeParts(ride, renamed).map(({ key, share }) => ({ key, share })), [{ key: "1", share: 1 }]);
+  assert.deepEqual(after.range.map(({ value, km }) => ({ value, km })), before.range.map(({ value, km }) => ({ value, km })));
 });

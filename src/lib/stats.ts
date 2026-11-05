@@ -98,7 +98,7 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
     for (const [k, v] of Object.entries(r.modeKm)) modeKm[k] = (modeKm[k] ?? 0) + v;
     for (const [k, v] of Object.entries(r.modeMotorWh)) modeWh[k] = (modeWh[k] ?? 0) + v;
   }
-  const assistedS = sum(Object.entries(modeS).filter(([k]) => modeName(s, k) !== "Off").map(([, v]) => v));
+  const assistedS = sum(Object.entries(modeS).filter(([k]) => Number(k) !== 0).map(([, v]) => v));
   const modes = Object.keys({ ...modeS, ...modeKm })
     .filter((k) => (modeS[k] ?? 0) >= 60 || (modeKm[k] ?? 0) >= 0.5)
     .map((k) => ({
@@ -146,7 +146,7 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
   // Range on a full battery for each assisted mode
   const usableWh = health?.usableWh ?? s.batteryWh;
   const range = modes
-    .filter((m) => m.whPerKm && m.name !== "Off" && m.seconds >= 600)
+    .filter((m) => m.whPerKm && Number(m.value) !== 0 && m.seconds >= 600)
     .map((m) => ({ ...m, km: usableWh / m.whPerKm!, coldKm: coldExtra && coldExtra > 0 ? usableWh / (m.whPerKm! * (1 + coldExtra)) : null }));
 
   // Gears
@@ -205,11 +205,11 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
 /** A ride's assisted time split by mode, for the little stacked bars. */
 export function modeParts(r: RideSummary, s: Settings) {
   const total = Object.entries(r.modeS)
-    .filter(([k]) => modeName(s, k) !== "Off")
+    .filter(([k]) => Number(k) !== 0)
     .reduce((a, [, v]) => a + v, 0);
   if (!total) return [];
   return Object.entries(r.modeS)
-    .filter(([k, v]) => v > 0 && modeName(s, k) !== "Off")
+    .filter(([k, v]) => v > 0 && Number(k) !== 0)
     .sort(([a], [b]) => modeRank(s, a) - modeRank(s, b))
     .map(([k, v]) => ({ key: k, share: v / total, color: modeColor(s, k), name: modeName(s, k) }));
 }
