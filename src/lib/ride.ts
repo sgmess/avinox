@@ -33,6 +33,34 @@ export type RideSummary = {
   /** Seconds of motor torque in 10 Nm bands, index 0 = 0–10 Nm, the last = 110 Nm and over. */
   torqueS: number[];
   maxTorque: number;
+  /*
+   * Added with the stats from sgmess/avinox-stats. Rides imported before then
+   * don't have these until they're imported again with "Update existing rides".
+   */
+  /** Seconds covered by samples a short gap apart, and seconds in longer gaps. */
+  observedS?: number;
+  unknownS?: number;
+  /** Samples sharing a timestamp (the last one is kept) and frames dropped for a bad checksum. */
+  duplicates?: number;
+  badFrames?: number;
+  /** Averages count only the time each is above zero. W and rpm. */
+  riderWAvg?: number;
+  riderWMax?: number;
+  motorWAvg?: number;
+  motorWMax?: number;
+  cadenceAvg?: number;
+  cadenceMax?: number;
+  /** Rider work as the bike counted it (field 52), kJ. */
+  riderKj?: number | null;
+  /** Seconds of motor torque in ZONE_TORQUE bands and motor power in ZONE_WATTS bands. */
+  torqueZoneS?: number[];
+  wattZoneS?: number[];
+  /** Seconds in each gear while pedalling. */
+  gearPedalS?: Record<string, number>;
+  gearChanges?: number;
+  /** Steepest climb and descent over 100 m, %. */
+  gradeUpPct?: number;
+  gradeDownPct?: number;
   name?: string;
   notes?: string;
 };
@@ -54,7 +82,11 @@ export type TrackPoint = {
 };
 
 export const TORQUE_BANDS = 12;
-const MAX_GAP_S = 10;
+/** Upper limits of the first four zones; the fifth is everything above. */
+export const ZONE_TORQUE = [30, 60, 85, 105];
+export const ZONE_WATTS = [150, 350, 600, 850];
+/** The shortest gap that counts as missing data, whatever the sample rate. */
+const MIN_GAP_LIMIT_S = 2;
 const MOVING_KMH = 2;
 const TRACK_POINTS = 600;
 
@@ -69,19 +101,52 @@ export function rideId(file: Pick<RideFile, "serial" | "rideId" | "start">) {
   return `${(file.serial || "bike").replace(/[^A-Za-z0-9]/g, "")}-${file.rideId}-${file.start}`;
 }
 
-export function summarise(file: RideFile): { summary: RideSummary; track: TrackPoint[] } {
-  // Ignore duplicate and backwards timestamps without moving the time baseline.
-  let latest = -Infinity;
-  const s = file.samples.filter((sample) => {
-    if (!Number.isFinite(sample.t) || sample.t <= latest) return false;
-    latest = sample.t;
-    return true;
+/**
+ * Puts samples in time order, keeping the last one at each timestamp, and
+ * weights each by the time to the next. A sample holds for one missed reading
+ * (up to twice the usual interval, so 2 s at the bike's 1 Hz); longer gaps are
+ * unknown time, not counted as riding, stopping or any mode.
+ */
+export function timeline(samples: Sample[]) {
+  const sorted = samples.filter((x) => Number.isFinite(x.t) && x.t > 0).sort((a, b) => a.t - b.t);
+  const s: Sample[] = [];
+  for (const x of sorted) {
+    if (s.length && s[s.length - 1].t === x.t) s[s.length - 1] = x;
+    else s.push(x);
+  }
+  const steps = s.slice(1).map((x, i) => x.t - s[i].t).sort((a, b) => a - b);
+  const usual = steps.length ? steps[Math.floor(steps.length / 2)] : 1;
+  const limit = Math.max(MIN_GAP_LIMIT_S, 2 * usual);
+  let unknownS = 0;
+  const weights = s.map((x, i) => {
+    const dt = i + 1 < s.length ? s[i + 1].t - x.t : 0;
+    if (dt > limit) {
+      unknownS += dt;
+      return 0;
+    }
+    return dt;
   });
+  return { s, weights, unknownS, duplicates: sorted.length - s.length };
+}
+
+function zone(v: number, limits: number[]) {
+  // The fourth zone's upper limit is inclusive (105 Nm, 850 W).
+  let i = 0;
+  while (i < 3 && v >= limits[i]) i++;
+  return i === 3 && v > limits[3] ? 4 : i;
+}
+
+export function summarise(file: RideFile): { summary: RideSummary; track: TrackPoint[] } {
+  const { s, weights, unknownS, duplicates } = timeline(file.samples);
   const modeS: Record<string, number> = {};
   const modeKm: Record<string, number> = {};
   const modeMotorWh: Record<string, number> = {};
   const gearS: Record<string, number> = {};
+  const gearPedalS: Record<string, number> = {};
   const torqueS = new Array<number>(TORQUE_BANDS).fill(0);
+  const torqueZoneS = [0, 0, 0, 0, 0];
+  const wattZoneS = [0, 0, 0, 0, 0];
+  let observedS = 0;
   let movingS = 0;
   let motorWh = 0;
   let riderWh = 0;
@@ -97,14 +162,18 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
   let batteryStart: number | null = null;
   let batteryEnd: number | null = null;
   let odometer: number | null = null;
+  const power = { rider: 0, riderS: 0, riderMax: 0, motor: 0, motorS: 0, motorMax: 0, cadence: 0, cadenceS: 0, cadenceMax: 0 };
+  let energyJ: number | null = null;
+  let gearChanges = 0;
 
   for (let i = 0; i < s.length; i++) {
     const a = s[i];
-    const prev = s[i - 1];
-    const dt = prev ? Math.min(a.t - prev.t, MAX_GAP_S) : 0;
-    const dKm = prev ? Math.max(0, a.km - prev.km) : 0;
+    const next = s[i + 1];
+    const dt = weights[i];
+    const dKm = next && dt ? Math.max(0, next.km - a.km) : 0;
     const moving = a.speed > MOVING_KMH;
 
+    observedS += dt;
     motorWh += (a.motorPower * dt) / 3600;
     riderWh += (a.riderPower * dt) / 3600;
     add(modeMotorWh, a.assist, (a.motorPower * dt) / 3600);
@@ -115,9 +184,31 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
       if (a.gear) add(gearS, a.gear, dt);
       if (a.motorTorque > 0) torqueS[Math.min(TORQUE_BANDS - 1, Math.floor(a.motorTorque / 10))] += dt;
     }
-    // Readings past these are sensor glitches, not a top speed or torque.
+    if (a.gear && a.cadence > 0) add(gearPedalS, a.gear, dt);
+    // A change only counts when the last sample was close enough in time to see it.
+    const prev = s[i - 1];
+    if (prev && weights[i - 1] > 0 && a.gear && prev.gear && a.gear !== prev.gear) gearChanges++;
+    if (a.motorTorque > 0) torqueZoneS[zone(a.motorTorque, ZONE_TORQUE)] += dt;
+    if (a.motorPower > 0) wattZoneS[zone(a.motorPower, ZONE_WATTS)] += dt;
+    // Readings past these are sensor glitches, not a top speed, torque or power.
     if (a.speed > maxKmh && a.speed < 80) maxKmh = a.speed;
     if (a.motorTorque > maxTorque && a.motorTorque < 200) maxTorque = a.motorTorque;
+    if (a.riderPower > 0 && a.riderPower < 3000) {
+      power.rider += a.riderPower * dt;
+      power.riderS += dt;
+      power.riderMax = Math.max(power.riderMax, a.riderPower);
+    }
+    if (a.motorPower > 0 && a.motorPower < 3000) {
+      power.motor += a.motorPower * dt;
+      power.motorS += dt;
+      power.motorMax = Math.max(power.motorMax, a.motorPower);
+    }
+    if (a.cadence > 0 && a.cadence < 250) {
+      power.cadence += a.cadence * dt;
+      power.cadenceS += dt;
+      power.cadenceMax = Math.max(power.cadenceMax, a.cadence);
+    }
+    if (a.energyJ !== null && a.energyJ > 0) energyJ = Math.max(energyJ ?? 0, a.energyJ);
     if (a.temperature !== null && a.temperature > -40 && a.temperature < 90) {
       tempMin = tempMin === null ? a.temperature : Math.min(tempMin, a.temperature);
       tempMax = tempMax === null ? a.temperature : Math.max(tempMax, a.temperature);
@@ -139,6 +230,9 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
   const last = s[s.length - 1];
   const first = s[0];
   const start = file.start || first?.t || 0;
+  const elevation = climb(s);
+  const grade = steepest(s);
+  const avg = (sum: number, secs: number) => (secs ? round(sum / secs, 1) : 0);
   const summary: RideSummary = {
     id: rideId(file),
     serial: file.serial,
@@ -146,8 +240,8 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     end: file.end > start ? file.end : last?.t ?? start,
     movingS: Math.round(movingS),
     km: round(last ? last.km - (first?.km ?? 0) : 0, 3),
-    ascentM: round(file.ascentM || climb(s, 1), 0),
-    descentM: round(file.descentM || climb(s, -1), 0),
+    ascentM: round(file.ascentM || elevation.up, 0),
+    descentM: round(file.descentM || elevation.down, 0),
     maxKmh: round(maxKmh, 1),
     batteryStart,
     batteryEnd,
@@ -165,24 +259,92 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     gearS: roundAll(gearS, 0),
     torqueS: torqueS.map((v) => Math.round(v)),
     maxTorque: round(maxTorque, 1),
+    observedS: Math.round(observedS),
+    unknownS: Math.round(unknownS),
+    duplicates,
+    badFrames: file.badFrames ?? 0,
+    riderWAvg: avg(power.rider, power.riderS),
+    riderWMax: round(power.riderMax, 1),
+    motorWAvg: avg(power.motor, power.motorS),
+    motorWMax: round(power.motorMax, 1),
+    cadenceAvg: avg(power.cadence, power.cadenceS),
+    cadenceMax: round(power.cadenceMax, 1),
+    riderKj: energyJ === null ? null : round(energyJ / 1000, 1),
+    torqueZoneS: torqueZoneS.map((v) => Math.round(v)),
+    wattZoneS: wattZoneS.map((v) => Math.round(v)),
+    gearPedalS: roundAll(gearPedalS, 0),
+    gearChanges,
+    gradeUpPct: round(grade.up, 1),
+    gradeDownPct: round(grade.down, 1),
   };
   return { summary, track: thin(s, start) };
 }
 
-/** Climb or descent from the altitude, ignoring sub-metre noise. */
-function climb(s: Sample[], dir: 1 | -1) {
-  let total = 0;
-  let base: number | null = null;
-  for (const a of s) {
-    if (a.altitude === null) continue;
-    if (base === null) base = a.altitude;
-    const d = (a.altitude - base) * dir;
-    if (d >= 1) {
-      total += d;
-      base = a.altitude;
-    } else if (d <= -1) base = a.altitude;
+/** Means over a window of ±w seconds, for altitude that wobbles a metre or two. */
+function smooth(ts: number[], vals: number[], w: number) {
+  const out = new Array<number>(vals.length);
+  let sum = 0;
+  let lo = 0;
+  let hi = -1;
+  for (let i = 0; i < vals.length; i++) {
+    while (hi + 1 < vals.length && ts[hi + 1] <= ts[i] + w) sum += vals[++hi];
+    while (ts[lo] < ts[i] - w) sum -= vals[lo++];
+    out[i] = sum / (hi - lo + 1);
   }
-  return total;
+  return out;
+}
+
+const withAltitude = (s: Sample[]) => s.filter((a): a is Sample & { altitude: number } => a.altitude !== null);
+
+/** Climb and descent from the altitude, smoothed over 30 s and ignoring changes under 1.5 m. */
+function climb(s: Sample[]) {
+  const pts = withAltitude(s);
+  if (!pts.length) return { up: 0, down: 0 };
+  const alt = smooth(pts.map((a) => a.t), pts.map((a) => a.altitude), 30);
+  let up = 0;
+  let down = 0;
+  let base = alt[0];
+  for (const x of alt) {
+    const d = x - base;
+    if (d >= 1.5) {
+      up += d;
+      base = x;
+    } else if (d <= -1.5) {
+      down -= d;
+      base = x;
+    }
+  }
+  return { up, down };
+}
+
+/**
+ * Steepest climb and descent over 100 m stretches covered within a minute
+ * (6 km/h or faster), on altitude with jumps over 3 m/s taken out.
+ */
+function steepest(s: Sample[]) {
+  const pts = withAltitude(s);
+  const n = pts.length;
+  if (n < 10) return { up: 0, down: 0 };
+  const level = [pts[0].altitude];
+  for (let i = 1; i < n; i++) {
+    const step = pts[i].altitude - pts[i - 1].altitude;
+    level.push(level[i - 1] + (Math.abs(step) > 3 * (pts[i].t - pts[i - 1].t) ? 0 : step));
+  }
+  const alt = smooth(pts.map((a) => a.t), level, 5);
+  let up = 0;
+  let down = 0;
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    if (j < i) j = i;
+    while (j < n && (pts[j].km - pts[i].km) * 1000 < 100) j++;
+    if (j >= n) break;
+    if (pts[j].t - pts[i].t > 60) continue;
+    const g = ((alt[j] - alt[i]) / ((pts[j].km - pts[i].km) * 1000)) * 100;
+    // Anything past 60% is a GPS or barometer glitch on a bike.
+    if (g > up && g < 60) up = g;
+    if (g < down && g > -60) down = g;
+  }
+  return { up, down };
 }
 
 function thin(s: Sample[], start: number): TrackPoint[] {

@@ -114,7 +114,7 @@ export function Importer() {
         </div>
         <label className="flex min-h-11 items-center gap-2 text-sm text-soft">
           <input type="checkbox" checked={updateExisting} disabled={busy} onChange={(e) => setUpdateExisting(e.target.checked)} />
-          Update existing rides (keeps names and notes)
+          Update existing rides (keeps ride names)
         </label>
         <p className="max-w-xl text-xs text-muted">Use this with complete recordings to replace an earlier partial import or recalculate a ride after a fix.</p>
         <input ref={files} type="file" multiple className="hidden" onChange={(e) => {

@@ -8,6 +8,11 @@
  * Explorer, and lucad87/avinox-setup-app, MIT licence, Copyright (c) 2026
  * Luca Donnaloia, whose parser this follows).
  *
+ * Each frame is `EB 02`, a uint16 LE payload length, the protobuf payload and
+ * a uint16 LE CRC-16 of the payload (init 0x3692, reflected poly 0x8408), as
+ * worked out in sgmess/avinox-stats. Frames that fail the CRC are skipped and
+ * counted, and the reader resyncs on the next good frame.
+ *
  * Runs in the browser (and under Node for the tests). Nothing is uploaded here.
  */
 
@@ -42,6 +47,8 @@ export type Sample = {
   /** % */
   battery: number | null;
   odometerKm: number | null;
+  /** Rider work since the start, joules (field 52), if recorded. */
+  energyJ: number | null;
 };
 
 export type RideFile = {
@@ -53,6 +60,8 @@ export type RideFile = {
   ascentM: number;
   descentM: number;
   samples: Sample[];
+  /** Frames dropped for a bad checksum or an unreadable payload. */
+  badFrames: number;
 };
 
 type Fields = Record<number, bigint | Uint8Array>;
@@ -150,11 +159,55 @@ function sample(f: Fields): Sample {
     heartRate: num(f[51]) || null,
     battery: num(f[71]),
     odometerKm: f[73] === undefined ? null : scaled(f[73], 1000),
+    energyJ: num(f[52]),
   };
+}
+
+/** CRC-16 of a frame's payload, as the bike writes it. */
+export function crc16(bytes: Uint8Array, start = 0, end = bytes.length) {
+  let crc = 0x3692;
+  for (let p = start; p < end; p++) {
+    crc ^= bytes[p];
+    for (let i = 0; i < 8; i++) crc = crc & 1 ? (crc >>> 1) ^ 0x8408 : crc >>> 1;
+  }
+  return crc;
 }
 
 export function isRideFile(buffer: ArrayBuffer) {
   return buffer.byteLength >= HEADER_SIZE && new DataView(buffer).getUint32(0, true) === MAGIC;
+}
+
+/**
+ * Walks the frames to the end of the file: the header's sample count is
+ * sometimes one short. A frame with a bad checksum is dropped, and the reader
+ * steps forward a byte at a time until the next frame checks out.
+ */
+function readFrames(bytes: Uint8Array, view: DataView, checkCrc: boolean) {
+  const samples: Sample[] = [];
+  let badFrames = 0;
+  let lost = false;
+  let p = HEADER_SIZE;
+  while (p + 6 <= bytes.length) {
+    const type = view.getUint16(p, true);
+    const end = p + 4 + view.getUint16(p + 2, true);
+    const fits = end + 2 <= bytes.length;
+    if (type !== FRAME_TYPE || !fits || (checkCrc && crc16(bytes, p + 4, end) !== view.getUint16(end, true))) {
+      // A ride cut off mid-write keeps what it has.
+      if (!lost && type === FRAME_TYPE && fits) badFrames++;
+      if (!checkCrc && type === FRAME_TYPE && !fits) break;
+      lost = true;
+      p++;
+      continue;
+    }
+    lost = false;
+    try {
+      samples.push(sample(message(bytes.subarray(p + 4, end))));
+    } catch {
+      badFrames++;
+    }
+    p = end + 2;
+  }
+  return { samples, badFrames };
 }
 
 export function parseRide(buffer: ArrayBuffer): RideFile {
@@ -165,18 +218,10 @@ export function parseRide(buffer: ArrayBuffer): RideFile {
   let serial = "";
   for (let i = 110; i < 128 && bytes[i]; i++) serial += String.fromCharCode(bytes[i]);
 
-  // Walk the frames to the end of the file: the header's sample count is
-  // sometimes one short.
-  const samples: Sample[] = [];
-  let p = HEADER_SIZE;
-  while (p + 4 <= bytes.length) {
-    const type = view.getUint16(p, true);
-    const len = view.getUint16(p + 2, true);
-    if (type !== FRAME_TYPE) throw new Error(`Unknown frame type at byte ${p}`);
-    if (p + 4 + len > bytes.length) break; // a ride cut off mid-write keeps what it has
-    samples.push(sample(message(bytes.subarray(p + 4, p + 4 + len))));
-    p += len + 6;
-  }
+  let { samples, badFrames } = readFrames(bytes, view, true);
+  // The checksum is known from one firmware's files. If none pass, this file's
+  // firmware likely checks them differently: read it the way the bike lays it out.
+  if (!samples.length && badFrames) ({ samples, badFrames } = readFrames(bytes, view, false));
 
   return {
     rideId: view.getUint32(6, true),
@@ -186,5 +231,6 @@ export function parseRide(buffer: ArrayBuffer): RideFile {
     ascentM: view.getFloat32(22, true),
     descentM: view.getFloat32(26, true),
     samples: samples.filter((s) => s.t > 0),
+    badFrames,
   };
 }

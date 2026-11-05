@@ -8,6 +8,8 @@ import { batteryDrop, modeParts, packWh, rideWhPerKm } from "@/lib/stats";
 import { dist, fmtDist, fmtDuration, fmtHeight, fmtLongDate, fmtSpeed, height, heightUnit, n, perDist, speedUnit } from "@/lib/format";
 import { Card, ModeBar, UnitSwitch } from "./ui";
 import { RideMap, type Segment } from "./RideMap";
+import { RideDetails } from "./RideDetails";
+import { StoryImage } from "./StoryImage";
 import type { Typical } from "@/lib/typical";
 
 
@@ -34,7 +36,6 @@ export function RideView({
   const [units, setUnits] = useState<Units>(settings.units);
   const s = useMemo(() => ({ ...settings, units }), [settings, units]);
   const [name, setName] = useState(ride.name ?? "");
-  const [notes, setNotes] = useState(ride.notes ?? "");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const saveQueue = useRef(Promise.resolve());
   const saveVersion = useRef(0);
@@ -52,7 +53,7 @@ export function RideView({
   function save() {
     if (demo || deleting) return;
     const version = ++saveVersion.current;
-    const body = JSON.stringify({ name, notes });
+    const body = JSON.stringify({ name });
     setSaveStatus("saving");
     // Keep blur saves in order so an older request cannot overwrite newer edits.
     saveQueue.current = saveQueue.current.then(async () => {
@@ -204,6 +205,8 @@ export function RideView({
 
       <PowerChart ride={ride} track={track} units={units} cursor={cursor} setCursor={setCursor} />
 
+      <RideDetails ride={ride} units={units} />
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Battery on this ride">
           {ride.batteryStart !== null && ride.batteryEnd !== null ? (
@@ -243,29 +246,47 @@ export function RideView({
             ))}
           </div>
         </Card>
-        <Card title="Notes">
-          {demo ? (
-            <p className="text-muted">Tyre pressures, trail conditions, what you changed on the bike: notes stay with the ride.</p>
-          ) : (
-            <label>
-              <span className="sr-only">Notes</span>
-              <textarea
-                value={notes}
-                disabled={deleting}
-                onChange={(e) => {
-                  setNotes(e.target.value);
-                  saveVersion.current++;
-                  setSaveStatus("idle");
-                }}
-                onBlur={save}
-                placeholder="Tyre pressures, trail conditions, what you changed on the bike…"
-                className="min-h-[96px] w-full rounded-lg border border-edge p-2.5 text-sm"
-              />
-            </label>
-          )}
-        </Card>
+        <TimeCard ride={ride} units={units} />
       </div>
+
+      <StoryImage ride={ride} settings={s} title={title} />
     </div>
+  );
+}
+
+/** Where the time went: moving, stopped and gaps in the recording. */
+function TimeCard({ ride, units }: { ride: RideSummary; units: Units }) {
+  const total = Math.max(0, ride.end - ride.start);
+  // Older imports don't know their gaps: everything not moving counts as stopped.
+  const gaps = ride.unknownS ?? 0;
+  const stopped = Math.max(0, total - ride.movingS - gaps);
+  const overall = total ? ride.km / (total / 3600) : 0;
+  const parts = [
+    { label: "Moving", s: ride.movingS, color: "var(--accent)" },
+    { label: "Stopped", s: stopped, color: "var(--mode-off)" },
+    { label: "No data", s: gaps, color: "var(--muted)" },
+  ].filter((p) => p.s > 0);
+  return (
+    <Card title="Time on this ride" sub={`${fmtDuration(total)} from start to finish, ${fmtSpeed(overall, units)} overall`}>
+      <div className="flex h-3 overflow-hidden rounded bg-line" role="img" aria-label={parts.map((p) => `${p.label} ${fmtDuration(p.s)}`).join(", ")}>
+        {parts.map((p) => (
+          <div key={p.label} style={{ width: `${(p.s / Math.max(1, total)) * 100}%`, background: p.color }} />
+        ))}
+      </div>
+      <div className="mt-3 flex flex-col gap-1.5">
+        {parts.map((p) => (
+          <div key={p.label} className="flex items-center justify-between gap-2 border-t border-line pt-1.5">
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: p.color }} />
+              {p.label}
+            </span>
+            <span className="text-soft">
+              {fmtDuration(p.s)} · {Math.round((p.s / Math.max(1, total)) * 100)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

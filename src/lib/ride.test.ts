@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRide } from "./parseRide.ts";
+import { crc16, parseRide } from "./parseRide.ts";
 import { summarise } from "./ride.ts";
 import { batteryDrop, computeStats, modeParts, packWh } from "./stats.ts";
 import { demoRides } from "./demo.ts";
@@ -55,7 +55,9 @@ function buildFile(samples: { t: number; speed: number; assist: number; motorPow
     const head = Buffer.alloc(4);
     head.writeUInt16LE(0x02eb, 0);
     head.writeUInt16LE(msg.length, 2);
-    return Buffer.concat([head, msg, Buffer.alloc(2)]);
+    const crc = Buffer.alloc(2);
+    crc.writeUInt16LE(crc16(msg), 0);
+    return Buffer.concat([head, msg, crc]);
   });
   const buf = Buffer.concat([header, ...frames]);
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
@@ -102,12 +104,24 @@ test("summarises a ride", () => {
   assert.equal(summary.batteryStart, 100);
   assert.equal(summary.batteryEnd, 81);
   assert.ok(Math.abs(summary.km - 3.328) < 0.01);
-  assert.equal(summary.modeS["2"], 299);
-  assert.equal(summary.modeS["3"], 300);
-  assert.ok(Math.abs(summary.motorWh - (299 * 200 + 300 * 400) / 3600) < 0.2);
-  assert.equal(summary.gearS["9"], 300);
-  assert.equal(summary.torqueS[3], 299);
-  assert.equal(summary.torqueS[6], 300);
+  // Each sample holds until the next; the last one adds no time.
+  assert.equal(summary.modeS["2"], 300);
+  assert.equal(summary.modeS["3"], 299);
+  assert.ok(Math.abs(summary.motorWh - (300 * 200 + 299 * 400) / 3600) < 0.2);
+  assert.equal(summary.gearS["9"], 299);
+  assert.equal(summary.torqueS[3], 300);
+  assert.equal(summary.torqueS[6], 299);
+  assert.equal(summary.observedS, 599);
+  assert.equal(summary.unknownS, 0);
+  assert.deepEqual(summary.torqueZoneS, [0, 300, 299, 0, 0]);
+  assert.deepEqual(summary.wattZoneS, [0, 300, 299, 0, 0]);
+  assert.equal(summary.gearChanges, 1);
+  assert.equal(summary.gearPedalS?.["5"], 300);
+  assert.equal(summary.riderWAvg, 150);
+  assert.equal(summary.motorWMax, 400);
+  assert.equal(summary.cadenceAvg, 70);
+  // 0.1 m a second at 20 km/h: a 1.8% climb.
+  assert.ok(Math.abs(summary.gradeUpPct! - 1.8) < 0.1, `grade ${summary.gradeUpPct}`);
   assert.equal(summary.tempMin, 12);
   assert.ok(track.length <= 600 && track.length > 100);
 });
@@ -145,13 +159,46 @@ test("settings are cleaned", () => {
   assert.equal(modeName(s, 1), "Eco");
 });
 
-test("duplicate and backwards samples do not change totals or the track", () => {
+test("out-of-order samples are sorted and the last sample at a timestamp wins", () => {
   const file = parseRide(buildFile(rows.slice(0, 10)));
   const expected = summarise(file);
-  const duplicate = { ...file.samples[1], motorPower: 5000, battery: 0 };
-  const backwards = { ...file.samples[0], motorPower: 5000, battery: 0 };
-  file.samples.splice(2, 0, duplicate, backwards);
-  assert.deepEqual(summarise(file), expected);
+  const shuffled = { ...file, samples: [...file.samples].reverse() };
+  assert.deepEqual(summarise(shuffled), expected);
+  // A stale copy written before the real sample is replaced by it.
+  const stale = { ...file.samples[1], motorPower: 5000, battery: 0 };
+  const withStale = { ...file, samples: [file.samples[0], stale, ...file.samples.slice(1)] };
+  assert.deepEqual({ ...summarise(withStale).summary, duplicates: 0 }, expected.summary);
+  assert.equal(summarise(withStale).summary.duplicates, 1);
+});
+
+test("gaps longer than one missed reading are unknown time", () => {
+  // 1 Hz, then 30 s with nothing, then 1 Hz again.
+  const gappy = rows.slice(0, 120).map((row, i) => ({ ...row, t: t0 + i + (i >= 60 ? 30 : 0) }));
+  const { summary } = summarise(parseRide(buildFile(gappy)));
+  assert.equal(summary.unknownS, 31);
+  assert.equal(summary.observedS, 118);
+  assert.equal(summary.movingS, 118);
+  // A 2 s step (one missed reading) still counts.
+  const missed = rows.slice(0, 10).map((row, i) => ({ ...row, t: t0 + i + (i >= 5 ? 1 : 0) }));
+  assert.equal(summarise(parseRide(buildFile(missed))).summary.observedS, 10);
+});
+
+test("a frame with a bad checksum is dropped and the rest still read", () => {
+  const buf = new Uint8Array(buildFile(rows.slice(0, 20)));
+  // Flip a byte inside the third frame's payload.
+  let p = 251;
+  for (let i = 0; i < 2; i++) p += 6 + (buf[p + 2] | (buf[p + 3] << 8));
+  buf[p + 10] ^= 0xff;
+  const ride = parseRide(buf.buffer);
+  assert.equal(ride.badFrames, 1);
+  assert.equal(ride.samples.length, 19);
+  // Junk between frames is skipped without counting a frame.
+  const junk = new Uint8Array(buf.length + 3);
+  const good = new Uint8Array(buildFile(rows.slice(0, 20)));
+  junk.set(good.subarray(0, 251 + 50));
+  junk.set(good.subarray(251 + 50), 251 + 53);
+  const resynced = parseRide(junk.buffer);
+  assert.ok(resynced.samples.length >= 18, `samples ${resynced.samples.length}`);
 });
 
 test("thinned tracks retain both endpoints and stay within 600 points", () => {
@@ -179,4 +226,15 @@ test("renaming modes does not change assisted time, shares or range eligibility"
   assert.equal(after.totals.assistedS, before.totals.assistedS);
   assert.deepEqual(modeParts(ride, renamed).map(({ key, share }) => ({ key, share })), [{ key: "1", share: 1 }]);
   assert.deepEqual(after.range.map(({ value, km }) => ({ value, km })), before.range.map(({ value, km }) => ({ value, km })));
+});
+
+test("a file where no checksum matches is still read", () => {
+  const buf = new Uint8Array(buildFile(rows.slice(0, 20)));
+  let p = 251;
+  while (p < buf.length) {
+    const len = buf[p + 2] | (buf[p + 3] << 8);
+    buf[p + 4 + len] ^= 0x55;
+    p += 6 + len;
+  }
+  assert.equal(parseRide(buf.buffer).samples.length, 20);
 });

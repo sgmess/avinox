@@ -19,6 +19,12 @@ function numMap(v: unknown, max = 1e9): Record<string, number> {
   return out;
 }
 
+const zones = (v: unknown) => {
+  const out = Array.isArray(v) ? v.slice(0, 5).map((x) => num(x, 0, 1e7)) : [];
+  while (out.length < 5) out.push(0);
+  return out;
+};
+
 export const RIDE_ID = /^[A-Za-z0-9]{1,40}-\d{1,10}-\d{1,12}$/;
 
 export function cleanSummary(input: unknown): RideSummary | null {
@@ -55,6 +61,23 @@ export function cleanSummary(input: unknown): RideSummary | null {
     gearS: numMap(r.gearS),
     torqueS: torque,
     maxTorque: num(r.maxTorque, 0, 300),
+    observedS: num(r.observedS, 0, 7 * 86400),
+    unknownS: num(r.unknownS, 0, 7 * 86400),
+    duplicates: num(r.duplicates, 0, 1e7),
+    badFrames: num(r.badFrames, 0, 1e7),
+    riderWAvg: num(r.riderWAvg, 0, 5000),
+    riderWMax: num(r.riderWMax, 0, 5000),
+    motorWAvg: num(r.motorWAvg, 0, 5000),
+    motorWMax: num(r.motorWMax, 0, 5000),
+    cadenceAvg: num(r.cadenceAvg, 0, 300),
+    cadenceMax: num(r.cadenceMax, 0, 300),
+    riderKj: opt(r.riderKj, 0, 1e6),
+    torqueZoneS: zones(r.torqueZoneS),
+    wattZoneS: zones(r.wattZoneS),
+    gearPedalS: numMap(r.gearPedalS),
+    gearChanges: num(r.gearChanges, 0, 1e6),
+    gradeUpPct: num(r.gradeUpPct, 0, 100),
+    gradeDownPct: num(r.gradeDownPct, -100, 0),
   };
 }
 
