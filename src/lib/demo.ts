@@ -33,6 +33,7 @@ export function demoRide(seed: number, start: number, opts: { km: number; hilly:
   let t = start;
   let battery = 100;
   let packWhUsed = 0;
+  let riderJ = 0;
   let temp = ambient;
   let modeIdx = 0;
   let modeLeftKm = opts.modes[0][1] * loopKm;
@@ -57,6 +58,7 @@ export function demoRide(seed: number, start: number, opts: { km: number; hilly:
     const dKm = (speed * STEP_S) / 3600;
     // A cold pack gives less: about 1.5% more drain per degree under 10 °C.
     packWhUsed += ((motor * STEP_S) / 3600 / 0.8) * (1 + Math.max(0, 10 - ambient) * 0.015);
+    riderJ += rider * STEP_S;
     battery = Math.max(1, Math.round(100 - (packWhUsed / (800 * health)) * 100));
     temp += (motor / 800) * 0.12 - (temp - ambient) * 0.004;
 
@@ -78,12 +80,13 @@ export function demoRide(seed: number, start: number, opts: { km: number; hilly:
       heartRate: Math.round(110 + rider / 6),
       battery,
       odometerKm: null,
+      energyJ: Math.round(riderJ),
     });
     km += dKm;
     modeLeftKm -= dKm;
     t += STEP_S;
   }
-  return { rideId: seed, serial: "DEMO", start, end: t, ascentM: 0, descentM: 0, samples };
+  return { rideId: seed, serial: "DEMO", start, end: t, ascentM: 0, descentM: 0, samples, badFrames: 0 };
 }
 
 /** About 18 months of riding up to `until` (unix seconds). */

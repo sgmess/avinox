@@ -7,11 +7,16 @@ Try it without an account at `/demo` (made-up rides).
 ## Where the data comes from
 
 The Avinox Ride app keeps a raw recording of every ride on Android at
-`Android/data/com.avinox.ride/files/ebike/data/…/cloud_ride_rec_*.proto`. Copy that folder to a computer (USB file transfer, or `adb pull`) and drop it on the Import page. Rides already imported are skipped, so the whole folder can be dropped again each time. Select **Update existing rides** to replace partial imports or recalculate rides after a fix; names and notes are kept.
+`Android/data/com.avinox.ride/files/ebike/data/…/cloud_ride_rec_*.proto`. Copy that folder to a computer (USB file transfer, or `adb pull`) and drop it on the Import page. Rides already imported are skipped, so the whole folder can be dropped again each time. Select **Update existing rides** to replace partial imports or recalculate rides after a fix; ride names are kept.
 
 The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's summary and a thinned route (about 600 points) are sent to the server. The format isn't documented by DJI: it's a 251-byte header then `0x02EB` frames of protobuf samples, with field numbers from the community's reverse engineering (Avinox Ride Explorer; [lucad87/avinox-setup-app](https://github.com/lucad87/avinox-setup-app), MIT). Assist modes are stored as numbers (1 Eco, 2 Trail, 3 Turbo, 4 Auto, 20+ custom, as far as riders have worked out), and Settings lets a rider rename them. No per-cell battery voltages have been found in the files, so there's no cell balance chart; battery health is estimated instead.
 
 ## What's worked out
+
+- **Reading the file**: each frame ends in a CRC-16 of its payload (init `0x3692`, reflected poly `0x8408`, from [sgmess/avinox-stats](https://github.com/sgmess/avinox-stats)). Frames that fail it are skipped and counted, and the reader resyncs on the next good one.
+- **Time**: samples are sorted, the last one at a repeated timestamp wins, and each holds until the next if that's within one missed reading (2 s at the bike's 1 Hz). Longer gaps are unknown time, left out of durations, modes, gears and averages, and shown under each ride.
+- **Per ride**: average and peak motor power, rider power and cadence (averaged over the time each is above zero), motor torque and power zones, gears while pedalling and gear changes, steepest climb and descent over 100 m, distance per 1% of battery, and rider work in kJ and kcal. Rides imported before these were added need importing again with **Update existing rides**.
+- **Story image**: a 1080 × 1920 PNG of a ride for Instagram, drawn in the browser (gradient, your photo, or transparent), with the layout from avinox-stats.
 
 - **Battery used / Wh per mile**: the battery % drop times the pack size (Settings, 600 or 800 Wh), or the motor's output over the drive efficiency when a ride has no battery reading.
 - **Drive efficiency**: motor output over pack energy across rides that used 20%+ of the battery (falls back to 80%).
@@ -58,5 +63,7 @@ The map includes a public CARTO basemap key. To use a different key, set
 | `src/lib/demo.ts` | Made-up rides for `/demo` and the tests |
 | `src/components/Dashboard.tsx`, `RideTable.tsx` | The dashboard |
 | `src/components/RideView.tsx`, `RideMap.tsx` | A ride's page (Leaflet map, CARTO dark tiles) |
+| `src/components/RideDetails.tsx` | A ride's power, cadence, zones, gears and gradients |
+| `src/components/StoryImage.tsx` | The story image for a ride |
 | `src/components/Importer.tsx` | Drop files or a folder; parses, skips known rides, saves three at a time |
 | `src/app/api/` | Session cookie, rides, settings |
