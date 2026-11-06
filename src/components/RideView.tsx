@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { RideSummary, TrackPoint } from "@/lib/ride";
 import { modeColor, modeName, modeRank, type Settings, type Units } from "@/lib/settings";
-import { batteryDrop, modeParts, packWh, rideWhPerKm } from "@/lib/stats";
-import { dist, fmtDist, fmtDuration, fmtHeight, fmtLongDate, fmtSpeed, height, heightUnit, n, perDist, speedUnit } from "@/lib/format";
+import { avgKmh, batteryDrop, modeParts, packWh, rideBatteryWh, rideWhPerKm } from "@/lib/stats";
+import { dist, fmtDist, fmtDuration, fmtHeight, fmtLongDate, fmtSpeed, height, heightUnit, hourOf, n, perDist, speedUnit } from "@/lib/format";
+import { DEFAULT_TIME_ZONE } from "@/lib/settings";
 import { Card, ModeBar, UnitSwitch } from "./ui";
 import { RideMap, type Segment } from "./RideMap";
 import { RideDetails } from "./RideDetails";
@@ -44,9 +45,9 @@ export function RideView({
   const [colourBy, setColourBy] = useState<ColourBy>("mode");
   const [cursor, setCursor] = useState<number | null>(null);
 
-  const kmh = ride.movingS ? ride.km / (ride.movingS / 3600) : 0;
+  const kmh = avgKmh(ride);
   const wh = rideWhPerKm(ride, s, efficiency);
-  const title = name || defaultName(ride);
+  const title = name || defaultName(ride, settings.timeZone);
 
   const segments = useMemo(() => colourSegments(track, s, colourBy), [track, s, colourBy]);
 
@@ -94,7 +95,7 @@ export function RideView({
     { label: "Distance", value: fmtDist(ride.km, units), ...compare(ride.km, typical?.km, "longer", "shorter") },
     { label: "Moving time", value: fmtDuration(ride.movingS), ...compare(ride.movingS, typical?.movingS, "longer", "shorter") },
     { label: "Climbed", value: fmtHeight(ride.ascentM, units), ...compare(ride.ascentM, typical?.ascentM, "more", "less") },
-    { label: "Avg speed", value: fmtSpeed(kmh, units), ...compare(kmh, typical?.kmh, "faster", "slower") },
+    { label: "Avg speed", value: kmh === null ? "–" : fmtSpeed(kmh, units), ...(kmh === null ? { text: "", tone: "" } : compare(kmh, typical?.kmh, "faster", "slower")) },
     { label: `Battery per ${units === "mi" ? "mile" : "km"}`, value: wh ? `${n(perDist(wh, units), 1)} Wh` : "–", ...(wh ? compare(wh, typical?.whPerKm, "more", "less", true) : { text: "", tone: "" }) },
     ride.hrAvg
       ? { label: "Heart rate", value: `${ride.hrAvg} bpm`, text: `peak ${ride.hrMax}`, tone: "text-muted" }
@@ -102,7 +103,7 @@ export function RideView({
   ];
 
   const drop = batteryDrop(ride);
-  const left = ride.batteryEnd !== null && wh ? (((ride.batteryEnd / 100) * settings.batteryWh) / wh) : null;
+  const left = ride.batteryEnd !== null && wh ? (((ride.batteryEnd / 100) * rideBatteryWh(ride, settings)) / wh) : null;
   const modes = Object.entries(ride.modeS)
     .filter(([, v]) => v >= 30)
     .sort(([a], [b]) => modeRank(s, a) - modeRank(s, b));
@@ -118,7 +119,7 @@ export function RideView({
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-muted">{fmtLongDate(ride.start)}</div>
+          <div className="text-muted">{fmtLongDate(ride.start, settings.timeZone)}</div>
           {demo ? (
             <h1 className="mt-1 font-display text-3xl font-semibold">{title}</h1>
           ) : (
@@ -127,7 +128,7 @@ export function RideView({
               <input
                 value={name}
                 disabled={deleting}
-                placeholder={defaultName(ride)}
+                placeholder={defaultName(ride, settings.timeZone)}
                 onChange={(e) => {
                   setName(e.target.value);
                   saveVersion.current++;
@@ -290,8 +291,8 @@ function TimeCard({ ride, units }: { ride: RideSummary; units: Units }) {
   );
 }
 
-export function defaultName(r: RideSummary) {
-  const h = Number(new Date(r.start * 1000).toLocaleString("en-GB", { timeZone: "Europe/London", hour: "numeric", hour12: false }));
+export function defaultName(r: RideSummary, tz = DEFAULT_TIME_ZONE) {
+  const h = hourOf(r.start, tz);
   const part = h < 5 ? "Night" : h < 12 ? "Morning" : h < 17 ? "Afternoon" : h < 21 ? "Evening" : "Night";
   return `${part} ride`;
 }
@@ -467,6 +468,7 @@ ${pts}
   a.href = URL.createObjectURL(new Blob([gpx], { type: "application/gpx+xml" }));
   a.download = `${new Date(ride.start * 1000).toISOString().slice(0, 10)} ${name}.gpx`.replace(/[^\w .-]/g, "");
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Freeing the link at once can cancel the download in Safari.
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 

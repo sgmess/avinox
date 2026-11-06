@@ -1,7 +1,7 @@
 import { monthKey } from "./format.ts";
 import type { RideSummary } from "./ride.ts";
-import { TORQUE_BANDS } from "./ride.ts";
-import { modeColor, modeName, modeRank, type Settings } from "./settings.ts";
+import { MAX_GEAR, TORQUE_BANDS } from "./ride.ts";
+import { batteryWhAt, modeColor, modeName, modeRank, type Settings } from "./settings.ts";
 
 /** Motor output over the energy it took from the pack, when the rides can't tell us. */
 export const DEFAULT_EFFICIENCY = 0.8;
@@ -10,6 +10,8 @@ const MIN_DROP_PCT = 20;
 const HEALTH_WINDOW = 10;
 const COLD_C = 10;
 const MILD_C = 15;
+/** Rides needed on each side before saying what the cold costs. */
+const MIN_TEMP_RIDES = 3;
 
 export const median = (xs: number[]) => {
   if (!xs.length) return null;
@@ -23,10 +25,25 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 export const batteryDrop = (r: RideSummary) =>
   r.batteryStart !== null && r.batteryEnd !== null && r.batteryStart > r.batteryEnd ? r.batteryStart - r.batteryEnd : 0;
 
+/** The pack the ride was ridden on (Settings keeps earlier packs with the dates they were swapped). */
+export const rideBatteryWh = (r: RideSummary, s: Settings) => batteryWhAt(s, r.start);
+
 /** Energy taken from the pack, Wh, from the battery gauge or else the motor. */
 export function packWh(r: RideSummary, s: Settings, efficiency: number) {
   const drop = batteryDrop(r);
-  return drop ? (drop / 100) * s.batteryWh : r.motorWh / efficiency;
+  return drop ? (drop / 100) * rideBatteryWh(r, s) : r.motorWh / efficiency;
+}
+
+/**
+ * Average moving speed, km/h, or null when it can't be trusted. Rides saved
+ * before movingKm existed count gaps in their distance but not their time, so
+ * those with real gaps get no average rather than an impossible one.
+ */
+export function avgKmh(r: RideSummary) {
+  if (r.movingS < 60) return null;
+  if (r.movingKm === undefined && (r.unknownS ?? 0) > r.movingS * 0.05) return null;
+  const v = (r.movingKm ?? r.km) / (r.movingS / 3600);
+  return v > 0 && v < 80 ? v : null;
 }
 
 /** Pack Wh per km for one ride, or null when it's too short to say. */
@@ -39,7 +56,7 @@ export function rideWhPerKm(r: RideSummary, s: Settings, efficiency: number) {
 export function measureEfficiency(rides: RideSummary[], s: Settings) {
   const fit = rides.filter((r) => batteryDrop(r) >= MIN_DROP_PCT);
   const motor = sum(fit.map((r) => r.motorWh));
-  const pack = sum(fit.map((r) => (batteryDrop(r) / 100) * s.batteryWh));
+  const pack = sum(fit.map((r) => (batteryDrop(r) / 100) * rideBatteryWh(r, s)));
   const e = pack ? motor / pack : 0;
   return e >= 0.55 && e <= 0.95 ? e : DEFAULT_EFFICIENCY;
 }
@@ -68,15 +85,15 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
   if (rides.length) {
     const byMonth = new Map<string, { km: number; rides: number; ascentM: number }>();
     for (const r of rides) {
-      const k = monthKey(r.start);
+      const k = monthKey(r.start, s.timeZone);
       const m = byMonth.get(k) ?? { km: 0, rides: 0, ascentM: 0 };
       m.km += r.km;
       m.rides++;
       m.ascentM += r.ascentM;
       byMonth.set(k, m);
     }
-    let [y, mo] = monthKey(rides[0].start).split("-").map(Number);
-    const last = monthKey(rides[rides.length - 1].start);
+    let [y, mo] = monthKey(rides[0].start, s.timeZone).split("-").map(Number);
+    const last = monthKey(rides[rides.length - 1].start, s.timeZone);
     for (;;) {
       const key = `${y}-${String(mo).padStart(2, "0")}`;
       months.push({ key, ...(byMonth.get(key) ?? { km: 0, rides: 0, ascentM: 0 }) });
@@ -112,9 +129,10 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
     }))
     .sort((a, b) => modeRank(s, a.value) - modeRank(s, b.value));
 
-  // Battery health: motor output per 1% of battery, early rides against recent ones
+  // Battery health: motor output per Wh taken from the pack, early rides against recent ones
   const healthRides = rides.filter((r) => batteryDrop(r) >= MIN_DROP_PCT && r.motorWh > 0);
-  const perPct = healthRides.map((r) => ({ t: r.start, v: r.motorWh / batteryDrop(r) }));
+  // Per Wh of pack, so swapping to a bigger battery isn't read as a healthier one.
+  const perPct = healthRides.map((r) => ({ t: r.start, v: r.motorWh / ((batteryDrop(r) / 100) * rideBatteryWh(r, s)) }));
   let health: { pct: number; usableWh: number; series: { t: number; pct: number }[] } | null = null;
   if (perPct.length >= HEALTH_WINDOW + 2) {
     const base = median(perPct.slice(0, HEALTH_WINDOW).map((p) => p.v))!;
@@ -128,9 +146,11 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
 
   // Cold: pack Wh per km on cold rides against mild ones
   const ridesWithTemp = rides.filter((r) => r.tempMin !== null && r.km >= 3);
-  const cold = median(ridesWithTemp.filter((r) => r.tempMin! < COLD_C).map((r) => rideWhPerKm(r, s, efficiency)!).filter(Boolean));
-  const mild = median(ridesWithTemp.filter((r) => r.tempMin! >= MILD_C).map((r) => rideWhPerKm(r, s, efficiency)!).filter(Boolean));
-  const coldExtra = cold && mild && ridesWithTemp.length >= 6 ? cold / mild - 1 : null;
+  const coldWh = ridesWithTemp.filter((r) => r.tempMin! < COLD_C).map((r) => rideWhPerKm(r, s, efficiency)).filter((x): x is number => !!x);
+  const mildWh = ridesWithTemp.filter((r) => r.tempMin! >= MILD_C).map((r) => rideWhPerKm(r, s, efficiency)).filter((x): x is number => !!x);
+  const cold = median(coldWh);
+  const mild = median(mildWh);
+  const coldExtra = cold && mild && coldWh.length >= MIN_TEMP_RIDES && mildWh.length >= MIN_TEMP_RIDES ? cold / mild - 1 : null;
   const tempBands = [
     { label: "Under 5°", lo: -99, hi: 5 },
     { label: "5–10°", lo: 5, hi: 10 },
@@ -151,7 +171,8 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
 
   // Gears
   const gearS: Record<string, number> = {};
-  for (const r of rides) for (const [k, v] of Object.entries(r.gearS)) gearS[k] = (gearS[k] ?? 0) + v;
+  // Older imports kept glitched gear numbers: leave out anything no drivetrain has.
+  for (const r of rides) for (const [k, v] of Object.entries(r.gearS)) if (Number(k) >= 1 && Number(k) <= MAX_GEAR) gearS[k] = (gearS[k] ?? 0) + v;
   const gearTotal = sum(Object.values(gearS));
   const maxGear = Math.max(0, ...Object.keys(gearS).map(Number));
   const gears = gearTotal ? Array.from({ length: maxGear }, (_, i) => ({ gear: i + 1, share: (gearS[i + 1] ?? 0) / gearTotal })) : [];
@@ -187,12 +208,14 @@ export function computeStats(all: RideSummary[], s: Settings, now = Date.now() /
 
   return {
     rides,
+    timeZone: s.timeZone,
     efficiency,
     totals: { rides: rides.length, km, movingS, assistedS, ascentM, wh, whPerKm: whPerKm(rides), thisYear, lastYear },
     months,
     modes,
     health,
     coldExtra,
+    coldRides: { cold: coldWh.length, mild: mildWh.length },
     tempBands,
     range,
     gears,

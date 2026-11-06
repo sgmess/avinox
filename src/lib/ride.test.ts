@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { crc16, parseRide } from "./parseRide.ts";
-import { summarise } from "./ride.ts";
-import { batteryDrop, computeStats, modeParts, packWh } from "./stats.ts";
+import { TRACK_POINTS, summarise } from "./ride.ts";
+import { avgKmh, batteryDrop, computeStats, modeParts, packWh } from "./stats.ts";
 import { demoRides } from "./demo.ts";
 import { DEFAULT_SETTINGS, cleanSettings, modeName } from "./settings.ts";
 
@@ -123,7 +123,7 @@ test("summarises a ride", () => {
   // 0.1 m a second at 20 km/h: a 1.8% climb.
   assert.ok(Math.abs(summary.gradeUpPct! - 1.8) < 0.1, `grade ${summary.gradeUpPct}`);
   assert.equal(summary.tempMin, 12);
-  assert.ok(track.length <= 600 && track.length > 100);
+  assert.ok(track.length <= TRACK_POINTS && track.length > 100);
 });
 
 test("dashboard stats from a year and a half of rides", () => {
@@ -153,7 +153,11 @@ test("a ride ending at zero battery keeps its full battery consumption", () => {
 
 test("settings are cleaned", () => {
   const s = cleanSettings({ units: "km", batteryWh: "600", modeNames: { "20": " Hills ", bad: "x" }, bikeName: 5 });
-  assert.deepEqual(s, { units: "km", batteryWh: 600, bikeName: "", modeNames: { "20": "Hills" } });
+  assert.deepEqual(s, { units: "km", batteryWh: 600, bikeName: "", modeNames: { "20": "Hills" }, timeZone: "Europe/London", batteryHistory: [] });
+  const t = cleanSettings({ timeZone: "Mars/Olympus", batteryHistory: [{ until: 1_800_000_000, wh: 500 }, { until: 1_700_000_000, wh: 625 }, { until: "x", wh: 600 }, null] });
+  assert.equal(t.timeZone, "Europe/London");
+  assert.deepEqual(t.batteryHistory, [{ until: 1_700_000_000, wh: 625 }, { until: 1_800_000_000, wh: 500 }]);
+  assert.equal(cleanSettings({ timeZone: "America/New_York" }).timeZone, "America/New_York");
   assert.equal(modeName(s, 20), "Hills");
   assert.equal(modeName(s, 21), "Custom 2");
   assert.equal(modeName(s, 1), "Eco");
@@ -201,12 +205,12 @@ test("a frame with a bad checksum is dropped and the rest still read", () => {
   assert.ok(resynced.samples.length >= 18, `samples ${resynced.samples.length}`);
 });
 
-test("thinned tracks retain both endpoints and stay within 600 points", () => {
-  for (const length of [1, 2, 599, 600, 601, 602, 1200, 1801]) {
+test("thinned tracks retain both endpoints and stay within TRACK_POINTS", () => {
+  for (const length of [1, 2, 599, 600, 601, 1199, 1200, 1201, 2401]) {
     const input = Array.from({ length }, (_, i) => ({ ...rows[0], t: t0 + i, km: 10 + i / 100 }));
     const file = parseRide(buildFile(input));
     const { summary, track } = summarise(file);
-    assert.ok(track.length <= 600);
+    assert.ok(track.length <= TRACK_POINTS);
     assert.equal(track[0].s, 0);
     assert.equal(track[0].km, 0);
     assert.equal(track.at(-1)!.s, length - 1);
@@ -237,4 +241,66 @@ test("a file where no checksum matches is still read", () => {
     p += 6 + len;
   }
   assert.equal(parseRide(buf.buffer).samples.length, 20);
+});
+
+test("glitched readings count as nothing: not in energy, zones, peaks or graphs", () => {
+  const spiky = rows.map((row, i) => (i === 100 ? { ...row, motorPower: 100_000, torque: 900 } : row));
+  const clean = summarise(parseRide(buildFile(rows))).summary;
+  const { summary, track } = summarise(parseRide(buildFile(spiky)));
+  // The spike's second has no motor at all, so the energy only drops by that second's 200 W.
+  assert.ok(Math.abs(summary.motorWh - (clean.motorWh - 200 / 3600)) < 0.1, `motorWh ${summary.motorWh} vs ${clean.motorWh}`);
+  assert.equal(summary.motorWMax, 400);
+  assert.equal(summary.maxTorque, clean.maxTorque);
+  assert.equal(summary.wattZoneS!.reduce((a, b) => a + b, 0), clean.wattZoneS!.reduce((a, b) => a + b, 0) - 1);
+  assert.ok(track.every((p) => p.motorW <= 400));
+});
+
+test("a trip counter that resets or jumps doesn't change the distance", () => {
+  const clean = summarise(parseRide(buildFile(rows))).summary;
+  const reset = rows.map((row, i) => (i >= 300 ? { ...row, km: row.km - rows[300].km + 20 / 3600 } : row));
+  const jump = rows.map((row, i) => (i === 200 ? { ...row, km: 500 } : row));
+  for (const variant of [reset, jump]) {
+    const { summary, track } = summarise(parseRide(buildFile(variant)));
+    assert.ok(Math.abs(summary.km - clean.km) < 0.02, `km ${summary.km} vs ${clean.km}`);
+    assert.ok(track.every((p, i) => i === 0 || p.km >= track[i - 1].km));
+  }
+});
+
+test("average speed uses distance and time from the same readings", () => {
+  // Ten minutes with no readings, during which the counter moved on 3 km.
+  const gappy = rows.slice(0, 120).map((row, i) => ({ ...row, t: t0 + i + (i >= 60 ? 600 : 0), km: row.km + (i >= 60 ? 3 : 0) }));
+  const { summary } = summarise(parseRide(buildFile(gappy)));
+  assert.ok(summary.km > 3);
+  assert.ok(Math.abs(avgKmh(summary)! - 20) < 0.5, `avg ${avgKmh(summary)}`);
+  // An older import (no movingKm) with real gaps gets no average rather than an impossible one.
+  const old = { ...summary, movingKm: undefined };
+  assert.equal(avgKmh(old), null);
+  // And whatever the source, an impossible average (here about 110 km/h) is never shown.
+  assert.equal(avgKmh({ ...old, unknownS: 0 }), null);
+});
+
+test("glitched gear numbers are left out", () => {
+  const glitch = rows.map((row, i) => (i === 50 ? { ...row, gear: 200 } : row));
+  const { summary } = summarise(parseRide(buildFile(glitch)));
+  assert.equal(summary.gearS["200"], undefined);
+  const st = computeStats([{ ...summary, gearS: { ...summary.gearS, "200": 5 } }], DEFAULT_SETTINGS);
+  assert.ok(st.gears.length <= 14);
+});
+
+test("the cold penalty needs three rides each side", () => {
+  const { summary } = summarise(parseRide(buildFile(rows)));
+  const ride = (i: number, tempMin: number, drop: number) => ({ ...summary, id: `SN-${i}-${t0 + i}`, start: t0 + i * 86400, tempMin, batteryStart: 100, batteryEnd: 100 - drop });
+  const two = [ride(1, 2, 40), ride(2, 20, 20), ride(3, 12, 30), ride(4, 12, 30), ride(5, 12, 30), ride(6, 12, 30)];
+  assert.equal(computeStats(two, DEFAULT_SETTINGS).coldExtra, null);
+  const enough = [ride(1, 2, 40), ride(2, 3, 40), ride(3, 4, 40), ride(4, 20, 20), ride(5, 21, 20), ride(6, 22, 20)];
+  const st = computeStats(enough, DEFAULT_SETTINGS);
+  assert.ok(Math.abs(st.coldExtra! - 1) < 1e-9);
+  assert.deepEqual(st.coldRides, { cold: 3, mild: 3 });
+});
+
+test("rides use the pack they were ridden on", () => {
+  const { summary } = summarise(parseRide(buildFile(rows)));
+  const s = { ...DEFAULT_SETTINGS, batteryWh: 800, batteryHistory: [{ until: summary.start + 1, wh: 600 }] };
+  assert.equal(packWh(summary, s, 0.8), 600 * 0.19);
+  assert.equal(packWh({ ...summary, start: summary.start + 10 }, s, 0.8), 800 * 0.19);
 });

@@ -1,9 +1,9 @@
-import type { Units } from "./settings.ts";
+import { DEFAULT_TIME_ZONE, type Units } from "./settings.ts";
 
 export const KM_PER_MI = 1.609344;
 const FT_PER_M = 3.28084;
 
-const TZ = "Europe/London";
+const TZ = DEFAULT_TIME_ZONE;
 
 export const distUnit = (u: Units) => (u === "mi" ? "mi" : "km");
 export const speedUnit = (u: Units) => (u === "mi" ? "mph" : "km/h");
@@ -36,16 +36,21 @@ export function fmtHours(s: number) {
   return `${n(h, h < 10 ? 1 : 0)} h`;
 }
 
-export const fmtDate = (t: number) =>
-  new Date(t * 1000).toLocaleDateString("en-GB", { timeZone: TZ, day: "numeric", month: "short", year: "numeric" });
-export const fmtDay = (t: number) =>
-  new Date(t * 1000).toLocaleString("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-export const fmtLongDate = (t: number) =>
-  new Date(t * 1000).toLocaleString("en-GB", { timeZone: TZ, weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+// Each takes the rider's timezone (Settings), London if none is given.
+export const fmtDate = (t: number, tz = TZ) =>
+  new Date(t * 1000).toLocaleDateString("en-GB", { timeZone: tz, day: "numeric", month: "short", year: "numeric" });
+export const fmtDay = (t: number, tz = TZ) =>
+  new Date(t * 1000).toLocaleString("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+export const fmtLongDate = (t: number, tz = TZ) =>
+  new Date(t * 1000).toLocaleString("en-GB", { timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+/** "08/10/2026", for searching rides by date. */
+export const fmtShortDate = (t: number, tz = TZ) => new Date(t * 1000).toLocaleDateString("en-GB", { timeZone: tz });
+/** The hour (0–23) a ride started. */
+export const hourOf = (t: number, tz = TZ) => Number(new Date(t * 1000).toLocaleString("en-GB", { timeZone: tz, hour: "numeric", hourCycle: "h23" }));
 
-/** "2026-03" for the London month a ride started in. */
-export function monthKey(t: number) {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric", month: "2-digit" }).formatToParts(new Date(t * 1000));
+/** "2026-03" for the month a ride started in. */
+export function monthKey(t: number, tz = TZ) {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "2-digit" }).formatToParts(new Date(t * 1000));
   const y = parts.find((p) => p.type === "year")?.value;
   const m = parts.find((p) => p.type === "month")?.value;
   return `${y}-${m}`;

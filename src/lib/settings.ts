@@ -7,6 +7,13 @@ export type Settings = {
   bikeName: string;
   /** Names for the assist values the bike records, e.g. {"1": "Eco"}. */
   modeNames: Record<string, string>;
+  /** IANA timezone used for dates, months and ride names. */
+  timeZone: string;
+  /**
+   * Packs ridden before the current one, oldest first: rides that started
+   * before `until` (Unix seconds) used `wh`. Rides after the last use batteryWh.
+   */
+  batteryHistory: { until: number; wh: number }[];
 };
 
 /*
@@ -17,7 +24,24 @@ export type Settings = {
  */
 export const DEFAULT_MODE_NAMES: Record<string, string> = { "0": "Off", "1": "Eco", "2": "Trail", "3": "Turbo", "4": "Auto", "5": "Boost" };
 
-export const DEFAULT_SETTINGS: Settings = { units: "mi", batteryWh: 800, bikeName: "", modeNames: {} };
+export const DEFAULT_TIME_ZONE = "Europe/London";
+
+export const DEFAULT_SETTINGS: Settings = { units: "mi", batteryWh: 800, bikeName: "", modeNames: {}, timeZone: DEFAULT_TIME_ZONE, batteryHistory: [] };
+
+/** The pack size a ride starting at `t` was ridden on. */
+export function batteryWhAt(s: Settings, t: number) {
+  return s.batteryHistory.find((b) => t < b.until)?.wh ?? s.batteryWh;
+}
+
+export function validTimeZone(tz: unknown): tz is string {
+  if (typeof tz !== "string" || !tz || tz.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function modeName(settings: Settings, value: string | number) {
   const k = String(value);
@@ -44,9 +68,18 @@ export function modeRank(settings: Settings, value: string | number) {
   return i === -1 ? 10 + Number(value) : i;
 }
 
+const cleanWh = (v: unknown) => {
+  const wh = Number(v);
+  return Number.isFinite(wh) && wh >= 200 && wh <= 2000 ? Math.round(wh) : null;
+};
+
 export function cleanSettings(input: unknown): Settings {
   const o = (input && typeof input === "object" ? input : {}) as Partial<Settings>;
-  const wh = Number(o.batteryWh);
+  const history = (Array.isArray(o.batteryHistory) ? o.batteryHistory : [])
+    .map((b) => ({ until: Number((b as { until?: unknown })?.until), wh: cleanWh((b as { wh?: unknown })?.wh) }))
+    .filter((b): b is { until: number; wh: number } => b.wh !== null && Number.isInteger(b.until) && b.until > 1_400_000_000 && b.until < 4_000_000_000)
+    .sort((a, b) => a.until - b.until)
+    .slice(-20);
   const names: Record<string, string> = {};
   if (o.modeNames && typeof o.modeNames === "object") {
     for (const [k, v] of Object.entries(o.modeNames)) {
@@ -55,8 +88,10 @@ export function cleanSettings(input: unknown): Settings {
   }
   return {
     units: o.units === "km" ? "km" : "mi",
-    batteryWh: Number.isFinite(wh) && wh >= 200 && wh <= 2000 ? Math.round(wh) : DEFAULT_SETTINGS.batteryWh,
+    batteryWh: cleanWh(o.batteryWh) ?? DEFAULT_SETTINGS.batteryWh,
     bikeName: typeof o.bikeName === "string" ? o.bikeName.trim().slice(0, 60) : "",
     modeNames: names,
+    timeZone: validTimeZone(o.timeZone) ? o.timeZone : DEFAULT_TIME_ZONE,
+    batteryHistory: history,
   };
 }

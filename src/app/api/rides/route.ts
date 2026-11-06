@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getViewer } from "@/lib/auth";
 import { ridesCol, tracksCol, db } from "@/lib/firebase-admin";
-import { cleanSummary, cleanTrack } from "@/lib/validate";
+import { asObject, cleanSummary, cleanTrack } from "@/lib/validate";
 import { track as count } from "@/lib/track";
 
 /** The ids already saved, so the import can skip rides it has seen. */
@@ -14,16 +14,18 @@ export async function GET() {
 
 /** Saves one ride: its summary and its thinned track. Saving it again replaces it but keeps its name and notes. */
 export async function POST(req: Request) {
-  await count("ride_uploaded");
   const viewer = await getViewer();
   if (!viewer) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
-  const body = (await req.json().catch(() => null)) as { summary?: unknown; track?: unknown } | null;
-  const summary = cleanSummary(body?.summary);
-  if (!summary) return NextResponse.json({ error: "That ride couldn't be read" }, { status: 400 });
+  const body = asObject(await req.json().catch(() => null));
+  const cleaned = cleanSummary(body?.summary);
+  if (!cleaned) return NextResponse.json({ error: "That ride couldn't be read" }, { status: 400 });
+  await count("ride_uploaded");
+  const summary = cleaned;
+  const ref = ridesCol(viewer.uid).doc(summary.id);
   const track = cleanTrack(body?.track);
   const batch = db.batch();
   // Replace computed maps as whole fields, retaining the stored name and notes.
-  batch.set(ridesCol(viewer.uid).doc(summary.id), summary, { mergeFields: Object.keys(summary) });
+  batch.set(ref, summary, { mergeFields: Object.keys(summary) });
   batch.set(tracksCol(viewer.uid).doc(summary.id), { points: track });
   await batch.commit();
   return NextResponse.json({ ok: true, id: summary.id });
