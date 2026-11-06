@@ -20,14 +20,16 @@ function rng(seed: number) {
 const ECO = 1, TRAIL = 2, TURBO = 3, AUTO = 4;
 const STEP_S = 5;
 
-export function demoRide(seed: number, start: number, opts: { km: number; hilly: number; modes: [number, number][]; ageDays: number }): RideFile {
+export function demoRide(seed: number, start: number, opts: { km: number; hilly: number; modes: [number, number][]; ageDays: number; route?: number }): RideFile {
   const r = rng(seed);
   const month = new Date(start * 1000).getUTCMonth();
   const ambient = 11 - 8 * Math.cos(((month + 0.5) / 12) * 2 * Math.PI) + (r() - 0.5) * 6;
   const health = 1 - Math.min(0.08, opts.ageDays * 0.00012);
   const samples: Sample[] = [];
-  const lat0 = 52.73 + r() * 0.04;
-  const lng0 = -2.0 + r() * 0.06;
+  // Rides on the same route share its loop and hills, so they can be compared.
+  const route = opts.route ?? seed;
+  const lat0 = opts.route === undefined ? 52.73 + r() * 0.04 : 52.6 + (route % 3) * 0.09;
+  const lng0 = opts.route === undefined ? -2.0 + r() * 0.06 : -2.1 + Math.floor(route / 3) * 0.14;
   const loopKm = opts.km;
   let km = 0;
   let t = start;
@@ -40,8 +42,8 @@ export function demoRide(seed: number, start: number, opts: { km: number; hilly:
 
   while (km < loopKm) {
     const phase = (km / loopKm) * 2 * Math.PI;
-    const grade = opts.hilly * (Math.sin(phase * 3 + seed) * 8 + Math.sin(phase * 7) * 3); // %
-    const alt = 150 + opts.hilly * (Math.cos(phase * 3 + seed) * -80 / 3 + Math.cos(phase * 7) * -10 / 7) * 3;
+    const grade = opts.hilly * (Math.sin(phase * 3 + route) * 8 + Math.sin(phase * 7) * 3); // %
+    const alt = 150 + opts.hilly * (Math.cos(phase * 3 + route) * -80 / 3 + Math.cos(phase * 7) * -10 / 7) * 6;
     if (modeLeftKm <= 0 && modeIdx < opts.modes.length - 1) {
       modeIdx++;
       modeLeftKm = opts.modes[modeIdx][1] * loopKm;
@@ -89,6 +91,15 @@ export function demoRide(seed: number, start: number, opts: { km: number; hilly:
   return { rideId: seed, serial: "DEMO", start, end: t, ascentM: 0, descentM: 0, samples, badFrames: 0 };
 }
 
+const DEMO_ROUTES = [
+  { km: 25, hilly: 0.15 },
+  { km: 22, hilly: 0.7 },
+  { km: 34, hilly: 1.1 },
+  { km: 46, hilly: 0.9 },
+  { km: 30, hilly: 0.6 },
+  { km: 55, hilly: 1.2 },
+];
+
 /** About 18 months of riding up to `until` (unix seconds). */
 export function demoRides(until = Date.UTC(2026, 9, 9) / 1000): { summaries: RideSummary[]; tracks: Record<string, TrackPoint[]> } {
   const r = rng(42);
@@ -111,11 +122,14 @@ export function demoRides(until = Date.UTC(2026, 9, 9) / 1000): { summaries: Rid
           : kind < 0.55
             ? [[ECO, 0.5], [AUTO, 0.5]]
             : [[TRAIL, 0.6 + r() * 0.2], [TURBO, 0.4]];
+    // The flat commute, or one of five hillier loops ridden again and again.
+    const route = kind < 0.25 ? 0 : 1 + Math.floor(r() * (DEMO_ROUTES.length - 1));
     const ride = demoRide(id++, start, {
-      km: kind < 0.25 ? 20 + r() * 10 : 18 + r() * 40,
-      hilly: kind < 0.25 ? 0.15 : 0.6 + r() * 0.6,
+      km: DEMO_ROUTES[route].km * (0.98 + r() * 0.04),
+      hilly: DEMO_ROUTES[route].hilly,
       modes,
       ageDays: (start - first) / 86400,
+      route,
     });
     const { summary, track } = summarise(ride);
     summaries.push(summary);

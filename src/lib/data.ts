@@ -18,3 +18,9 @@ export async function getRide(uid: string, id: string): Promise<{ ride: RideSumm
   if (!ride.exists) return null;
   return { ride: ride.data() as RideSummary, track: (track.data()?.points as TrackPoint[] | undefined) ?? [] };
 }
+
+/** Every ride's route, by ride id: for the heatmap and comparisons. */
+export async function listTracks(uid: string): Promise<Record<string, TrackPoint[]>> {
+  const snap = await tracksCol(uid).get();
+  return Object.fromEntries(snap.docs.map((d) => [d.id, (d.data().points as TrackPoint[] | undefined) ?? []]));
+}

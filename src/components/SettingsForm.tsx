@@ -151,6 +151,29 @@ export function SettingsForm({ settings, seenModes, email }: { settings: Setting
                 )}
               </span>
             </label>
+            <div className="flex flex-col gap-1.5 font-medium">
+              Electricity price
+              <div className="flex gap-2">
+                <label className="flex flex-col">
+                  <span className="sr-only">Currency symbol</span>
+                  <input className={`${input} w-16`} value={s.currency} maxLength={4} onChange={(e) => setS({ ...s, currency: e.target.value })} />
+                </label>
+                <label className="flex flex-1 flex-col">
+                  <span className="sr-only">Price per kWh</span>
+                  <input
+                    className={input}
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.001}
+                    value={s.pricePerKwh}
+                    onChange={(e) => setS({ ...s, pricePerKwh: Number(e.target.value) })}
+                  />
+                </label>
+                <span className="flex items-center text-sm font-normal text-muted">per kWh</span>
+              </div>
+              <span className="text-xs font-normal text-muted">From your energy bill, for what charging costs. A tenth is allowed for charger losses.</span>
+            </div>
           </div>
         </Card>
         <Card title="Assist mode names" sub="Ride files store a number for each mode, not its name. If a mode looks wrong on the charts, rename it here.">

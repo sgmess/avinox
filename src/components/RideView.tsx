@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { RideSummary, TrackPoint } from "@/lib/ride";
-import { modeColor, modeName, modeRank, type Settings, type Units } from "@/lib/settings";
+import { chargeCost, fmtMoney, modeColor, modeName, modeRank, type Settings, type Units } from "@/lib/settings";
 import { avgKmh, batteryDrop, modeParts, packWh, rideBatteryWh, rideWhPerKm } from "@/lib/stats";
 import { dist, fmtDist, fmtDuration, fmtHeight, fmtLongDate, fmtSpeed, height, heightUnit, hourOf, n, perDist, speedUnit } from "@/lib/format";
 import { DEFAULT_TIME_ZONE } from "@/lib/settings";
@@ -141,6 +141,9 @@ export function RideView({
           )}
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link href={`${base}/${ride.id}/compare`} className="flex min-h-11 items-center rounded-[10px] border border-edge px-4 font-semibold !text-ink hover:bg-white/5">
+            Compare
+          </Link>
           <button type="button" onClick={() => downloadGpx(ride, track, title)} className="min-h-11 rounded-[10px] border border-edge px-4 font-semibold hover:bg-white/5">
             Export GPX
           </button>
@@ -216,7 +219,7 @@ export function RideView({
                 <span className="font-display text-[28px] font-semibold">
                   {ride.batteryStart} → {ride.batteryEnd}%
                 </span>
-                <span className="text-muted">about {n(packWh(ride, s, efficiency))} Wh</span>
+                <span className="text-muted">about {n(packWh(ride, s, efficiency))} Wh, {fmtMoney(chargeCost(packWh(ride, s, efficiency), s), s)} to put back</span>
               </div>
               <p className="mt-2 text-soft">
                 {[
