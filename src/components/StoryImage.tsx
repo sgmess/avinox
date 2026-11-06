@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ZONE_TORQUE, ZONE_WATTS, type RideSummary } from "@/lib/ride";
 import type { Settings } from "@/lib/settings";
-import { modeParts } from "@/lib/stats";
-import { dist, distUnit, height, heightUnit, n, speedUnit } from "@/lib/format";
+import { avgKmh, modeParts } from "@/lib/stats";
+import { dist, distUnit, fmtDate, height, heightUnit, n, speedUnit } from "@/lib/format";
 import { Card } from "./ui";
 import { hasDetails, zoneLabels } from "./RideDetails";
 
@@ -68,7 +68,12 @@ export function StoryImage({ ride, settings, title }: { ride: RideSummary; setti
   }, [ride, settings, heading, title, handle, bike, background, photo, alpha]);
 
   const fileName = () => `ride-${new Date(ride.start * 1000).toISOString().slice(0, 10)}-story${background === "clear" ? "-transparent" : ""}.png`;
-  const blob = () => new Promise<Blob | null>((ok) => canvas.current?.toBlob(ok, "image/png") ?? ok(null));
+  // toBlob returns nothing and calls back later, so only resolve null when there's no canvas.
+  const blob = () =>
+    new Promise<Blob | null>((ok) => {
+      if (canvas.current) canvas.current.toBlob(ok, "image/png");
+      else ok(null);
+    });
 
   async function download() {
     const b = await blob();
@@ -130,8 +135,14 @@ export function StoryImage({ ride, settings, title }: { ride: RideSummary; setti
                   const f = e.target.files?.[0];
                   if (!f) return;
                   const img = new Image();
-                  img.onload = () => setPhoto(img);
-                  img.src = URL.createObjectURL(f);
+                  const url = URL.createObjectURL(f);
+                  // Once loaded the image can be drawn without its URL, so free it.
+                  img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    setPhoto(img);
+                  };
+                  img.onerror = () => URL.revokeObjectURL(url);
+                  img.src = url;
                 }}
               />
             </label>
@@ -248,7 +259,7 @@ function draw(cv: HTMLCanvasElement, ride: RideSummary, settings: Settings, o: O
   shadow(!light);
   text("Ride Stats", 80, 153, 46, C.h, { w: "700" });
   if (o.bike) text(o.bike, 80, 200, 28, C.sub);
-  text(new Date(ride.start * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }), 1000, 153, 32, C.sub, { a: "right" });
+  text(fmtDate(ride.start, settings.timeZone), 1000, 153, 32, C.sub, { a: "right" });
   if (o.handle) text(o.handle, 1000, 200, 34, C.h, { a: "right", w: "700" });
   g.fillStyle = C.div;
   g.fillRect(80, 240, 920, 3);
@@ -287,7 +298,7 @@ function draw(cv: HTMLCanvasElement, ride: RideSummary, settings: Settings, o: O
   };
   const minutes = Math.round((ride.end - ride.start) / 60);
   const duration = minutes < 60 ? [big(String(minutes), COL.dur), unit("min")] : [big(String(Math.floor(minutes / 60)), COL.dur, 6), unit("h", 16), big(String(minutes % 60), COL.dur, 6), unit("m")];
-  const kmh = ride.movingS ? ride.km / (ride.movingS / 3600) : 0;
+  const kmh = avgKmh(ride);
   const used = ride.batteryStart !== null && ride.batteryEnd !== null ? ride.batteryStart - ride.batteryEnd : null;
   const row = (i: number) => 410 + i * 196;
   tile(80, row(0), "DISTANCE", [big(n(dist(ride.km, u), 1), COL.dist), unit(distUnit(u))]);
@@ -295,7 +306,7 @@ function draw(cv: HTMLCanvasElement, ride: RideSummary, settings: Settings, o: O
   tile(80, row(1), "BATTERY USED", [big(used === null ? "–" : String(used), COL.bat), unit("%")]);
   tile(560, row(1), "ELEVATION GAIN", [big(`+${n(height(ride.ascentM, u))}`, COL.elev), unit(heightUnit(u))]);
   tile(80, row(2), "STEEPEST GRADIENT", [big(ride.gradeUpPct === undefined ? "–" : n(ride.gradeUpPct, 1), COL.grade), unit("%")]);
-  tile(560, row(2), "AVG / MAX SPEED", pair(n(dist(kmh, u), 1), n(dist(ride.maxKmh, u), 1), COL.avg, COL.max, speedUnit(u)));
+  tile(560, row(2), "AVG / MAX SPEED", pair(kmh === null ? "–" : n(dist(kmh, u), 1), n(dist(ride.maxKmh, u), 1), COL.avg, COL.max, speedUnit(u)));
 
   // Assist modes
   const sy = row(2) + 176 + 26;

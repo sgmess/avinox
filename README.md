@@ -18,7 +18,7 @@ The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's
 - **Per ride**: average and peak motor power, rider power and cadence (averaged over the time each is above zero), motor torque and power zones, gears while pedalling and gear changes, steepest climb and descent over 100 m, distance per 1% of battery, and rider work in kJ and kcal. Rides imported before these were added need importing again with **Update existing rides**.
 - **Story image**: a 1080 × 1920 PNG of a ride for Instagram, drawn in the browser (gradient, your photo, or transparent), with the layout from avinox-stats.
 
-- **Battery used / Wh per mile**: the battery % drop times the pack size (Settings, 600 or 800 Wh), or the motor's output over the drive efficiency when a ride has no battery reading.
+- **Battery used / Wh per mile**: the battery % drop times the pack size the ride was ridden on (Settings, 600 or 800 Wh; a battery change is recorded with its date so earlier rides keep the old size), or the motor's output over the drive efficiency when a ride has no battery reading.
 - **Drive efficiency**: motor output over pack energy across rides that used 20%+ of the battery (falls back to 80%).
 - **Wh per mile by mode**: motor energy in each mode over the distance ridden in it.
 - **Range on a full battery**: usable Wh over each mode's Wh per km, plus a cold-weather figure.
@@ -28,6 +28,8 @@ The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's
 ## Privacy
 
 Each rider's data lives under `riders/{uid}` (settings), `riders/{uid}/rides/{id}` (summaries) and `riders/{uid}/tracks/{id}` (routes), read and written only by the server for the signed-in rider. Firestore rules deny all browser access. Pages need sign-in except `/demo` and `/login`, and the site asks search engines not to index it.
+
+In production the site uses PostHog (EU) for usage counts, error reports and the occasional feedback prompt. Signed-in riders are identified there by their Firebase uid, email and display name; ride data isn't sent. Sign out everywhere (Settings) revokes every session the rider has.
 
 ## Running locally
 

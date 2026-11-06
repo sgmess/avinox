@@ -40,7 +40,7 @@ export function Dashboard({ rides, settings, base, demo }: Props) {
           <div>
             <h1 className="font-display text-[22px] font-bold">Ride Stats{demo && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 align-middle text-xs text-accent">Demo</span>}</h1>
             <div className="text-[13px] text-muted">
-              {[settings.bikeName, first && `${fmtDate(first.start)} to ${fmtDate(last.start)}`].filter(Boolean).join(" · ") || "No rides yet"}
+              {[settings.bikeName, first && `${fmtDate(first.start, s.timeZone)} to ${fmtDate(last.start, s.timeZone)}`].filter(Boolean).join(" · ") || "No rides yet"}
             </div>
           </div>
         </div>
@@ -263,7 +263,7 @@ function HealthCard({ st, settings }: { st: Stats; settings: Settings }) {
               of when you started · about {n(h.usableWh)} of {n(settings.batteryWh)} Wh · {h.pct >= 90 ? "normal wear" : h.pct >= 80 ? "worth keeping an eye on" : "ask your dealer to test it"}
             </span>
           </div>
-          <LineChart points={h.series.map((p) => ({ t: p.t, v: p.pct }))} lo={Math.min(80, ...h.series.map((p) => p.pct))} hi={Math.max(105, ...h.series.map((p) => p.pct))} label="Battery health over time" />
+          <LineChart points={h.series.map((p) => ({ t: p.t, v: p.pct }))} lo={Math.min(80, ...h.series.map((p) => p.pct))} hi={Math.max(105, ...h.series.map((p) => p.pct))} label="Battery health over time" tz={st.timeZone} />
           <p className="mt-1 text-xs text-muted">From rides that used at least 20% of the battery. Cold rides read a little low.</p>
         </>
       ) : (
@@ -273,7 +273,7 @@ function HealthCard({ st, settings }: { st: Stats; settings: Settings }) {
   );
 }
 
-function LineChart({ points, lo, hi, label }: { points: { t: number; v: number }[]; lo: number; hi: number; label: string }) {
+function LineChart({ points, lo, hi, label, tz }: { points: { t: number; v: number }[]; lo: number; hi: number; label: string; tz: string }) {
   if (points.length < 2) return null;
   const t0 = points[0].t;
   const t1 = points[points.length - 1].t;
@@ -288,8 +288,8 @@ function LineChart({ points, lo, hi, label }: { points: { t: number; v: number }
         <polyline points={points.map((p) => `${x(p.t)},${y(p.v)}`).join(" ")} fill="none" stroke="var(--ink)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
       </svg>
       <div className="flex justify-between text-xs text-muted">
-        <span>{fmtDate(t0)}</span>
-        <span>{fmtDate(t1)}</span>
+        <span>{fmtDate(t0, tz)}</span>
+        <span>{fmtDate(t1, tz)}</span>
       </div>
     </>
   );
@@ -395,11 +395,11 @@ function TempCard({ st }: { st: Stats }) {
         </svg>
       </div>
       <div className="mt-1 flex justify-between pl-10 text-xs text-muted">
-        <span>{fmtDate(t0)}</span>
-        <span>{fmtDate(t1)}</span>
+        <span>{fmtDate(t0, st.timeZone)}</span>
+        <span>{fmtDate(t1, st.timeZone)}</span>
       </div>
       <p className="mt-3 text-xs text-muted">
-        Coldest: {n(coldest.min)} °C on {fmtDate(coldest.t)} · Hottest: {n(hottest.max)} °C on {fmtDate(hottest.t)}
+        Coldest: {n(coldest.min)} °C on {fmtDate(coldest.t, st.timeZone)} · Hottest: {n(hottest.max)} °C on {fmtDate(hottest.t, st.timeZone)}
       </p>
     </Card>
   );
@@ -410,7 +410,7 @@ function ColdCard({ st, units }: { st: Stats; units: Units }) {
   const max = Math.max(...bands.map((b) => b.whPerKm!), 1);
   const min = Math.min(...bands.map((b) => b.whPerKm!), max) * 0.7;
   return (
-    <Card title="Cold costs range" badge="New" sub={`Battery per ${units === "mi" ? "mile" : "km"} by the temperature at the start of the ride`}>
+    <Card title="Cold costs range" badge="New" sub={`Battery per ${units === "mi" ? "mile" : "km"} by the coldest temperature on the ride`}>
       {bands.length >= 2 ? (
         <>
           <div className="flex h-[150px] items-end gap-2">
@@ -434,7 +434,15 @@ function ColdCard({ st, units }: { st: Stats; units: Units }) {
             <p className="mt-3 text-[13px] text-soft">
               {st.coldExtra > 0.02
                 ? `Below 10 °C you use ${Math.round(st.coldExtra * 100)}% more battery per ${units === "mi" ? "mile" : "km"} than above 15 °C, so expect less range in winter.`
-                : "Cold weather hardly changes how much battery you use."}
+                : "Cold weather hardly changes how much battery you use."}{" "}
+              <span className="text-muted">
+                From {st.coldRides.cold} {st.coldRides.cold === 1 ? "ride" : "rides"} below 10 °C and {st.coldRides.mild} above 15 °C.
+              </span>
+            </p>
+          )}
+          {st.coldExtra === null && (
+            <p className="mt-3 text-[13px] text-muted">
+              Needs at least 3 rides below 10 °C and 3 above 15 °C to say what the cold costs (so far {st.coldRides.cold} and {st.coldRides.mild}).
             </p>
           )}
         </>
@@ -460,7 +468,7 @@ function Records({ st, units, base }: { st: Stats; units: Units; base: string })
         <Link key={i.label} href={`${base}/${i.ride.id}`} className="rounded-2xl border border-line bg-card px-4 py-4 !text-ink hover:border-edge">
           <div className="text-xs text-muted">{i.label}</div>
           <div className="mt-1 font-display text-[22px] font-semibold">{i.value}</div>
-          <div className="text-xs text-accent">{fmtDate(i.ride.start)}</div>
+          <div className="text-xs text-accent">{fmtDate(i.ride.start, st.timeZone)}</div>
         </Link>
       ))}
     </div>

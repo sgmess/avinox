@@ -3,8 +3,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { RideSummary } from "@/lib/ride";
 import { modeName, type Settings } from "@/lib/settings";
-import { modeParts, rideWhPerKm } from "@/lib/stats";
-import { KM_PER_MI, dist, distUnit, fmtDate, fmtDay, fmtDuration, height, heightUnit, monthKey, monthLabel, n, perDist, speedUnit } from "@/lib/format";
+import { avgKmh, modeParts, rideWhPerKm } from "@/lib/stats";
+import { KM_PER_MI, dist, distUnit, fmtDate, fmtDay, fmtDuration, fmtShortDate, height, heightUnit, monthKey, monthLabel, n, perDist, speedUnit } from "@/lib/format";
 import { ModeBar } from "./ui";
 
 type SortKey = "start" | "km" | "movingS" | "speed" | "ascentM" | "used" | "wh";
@@ -26,6 +26,7 @@ export function RideTable({
   onClearMonth: () => void;
 }) {
   const u = settings.units;
+  const tz = settings.timeZone;
   const [q, setQ] = useState("");
   const [distanceFilter, setDistanceFilter] = useState(2);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "start", desc: true });
@@ -37,7 +38,7 @@ export function RideTable({
     const value = (r: RideSummary): number => {
       switch (sort.key) {
         case "speed":
-          return r.movingS ? r.km / (r.movingS / 3600) : 0;
+          return avgKmh(r) ?? -1;
         case "used":
           return r.batteryStart !== null && r.batteryEnd !== null ? r.batteryStart - r.batteryEnd : -1;
         case "wh":
@@ -49,10 +50,10 @@ export function RideTable({
     const needle = q.trim().toLowerCase();
     return rides
       .filter((r) => r.km >= minKm - 0.001)
-      .filter((r) => !month || monthKey(r.start) === month)
-      .filter((r) => !needle || `${fmtDay(r.start)} ${fmtDate(r.start)} ${new Date(r.start * 1000).toLocaleDateString("en-GB")} ${r.name ?? ""} ${r.notes ?? ""}`.toLowerCase().includes(needle))
+      .filter((r) => !month || monthKey(r.start, tz) === month)
+      .filter((r) => !needle || `${fmtDay(r.start, tz)} ${fmtDate(r.start, tz)} ${fmtShortDate(r.start, tz)} ${r.name ?? ""} ${r.notes ?? ""}`.toLowerCase().includes(needle))
       .sort((a, b) => (value(a) - value(b)) * (sort.desc ? -1 : 1));
-  }, [rides, minKm, month, q, sort, settings, efficiency]);
+  }, [rides, minKm, month, q, sort, settings, efficiency, tz]);
 
   const head = (key: SortKey, label: string, right = true) => (
     <th className={`px-2.5 py-2 font-medium ${right ? "text-right" : "text-left"}`} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}>
@@ -70,12 +71,13 @@ export function RideTable({
       [...cols, ...modes.map((m) => `${modeName(settings, m)} (min)`)],
       ...rows.map((r) => {
         const wh = rideWhPerKm(r, settings, efficiency);
+        const kmh = avgKmh(r);
         return [
           new Date(r.start * 1000).toISOString(),
           r.name ?? "",
           dist(r.km, u).toFixed(2),
           (r.movingS / 60).toFixed(0),
-          r.movingS ? dist(r.km / (r.movingS / 3600), u).toFixed(1) : "",
+          kmh === null ? "" : dist(kmh, u).toFixed(1),
           dist(r.maxKmh, u).toFixed(1),
           height(r.ascentM, u).toFixed(0),
           r.batteryStart ?? "",
@@ -90,12 +92,18 @@ export function RideTable({
         ];
       }),
     ];
-    const csv = lines.map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    // Text a spreadsheet would run as a formula (a ride named "=…") gets a leading apostrophe.
+    const cell = (c: string | number) => {
+      const text = typeof c === "string" && /^[=+\-@\t\r]/.test(c) && Number.isNaN(Number(c)) ?`'${c}` : String(c);
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const csv = lines.map((l) => l.map(cell).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "rides.csv";
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Freeing the link at once can cancel the download in Safari.
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 
   const chip = (active: boolean) =>
@@ -150,12 +158,12 @@ export function RideTable({
               return (
                 <tr key={r.id} className="border-t border-line">
                   <td className="px-2.5 py-3">
-                    <Link href={`${base}/${r.id}`}>{fmtDay(r.start)}</Link>
+                    <Link href={`${base}/${r.id}`}>{fmtDay(r.start, tz)}</Link>
                     {r.name && <div className="text-xs text-muted">{r.name}</div>}
                   </td>
                   <td className="px-2.5 py-3 text-right">{n(dist(r.km, u), 1)}</td>
                   <td className="px-2.5 py-3 text-right">{fmtDuration(r.movingS)}</td>
-                  <td className="px-2.5 py-3 text-right">{r.movingS ? n(dist(r.km / (r.movingS / 3600), u), 1) : "–"}</td>
+                  <td className="px-2.5 py-3 text-right">{avgKmh(r) === null ? "–" : n(dist(avgKmh(r)!, u), 1)}</td>
                   <td className="px-2.5 py-3 text-right">{n(height(r.ascentM, u))}</td>
                   <td className="px-2.5 py-3 text-right whitespace-nowrap">{r.batteryStart !== null && r.batteryEnd !== null ? <Battery from={r.batteryStart} to={r.batteryEnd} /> : "–"}</td>
                   <td className="px-2.5 py-3 text-right">{wh ? n(perDist(wh, u), 1) : "–"}</td>

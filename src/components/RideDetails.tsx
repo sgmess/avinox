@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { ZONE_TORQUE, ZONE_WATTS, type RideSummary } from "@/lib/ride";
+import { MAX_GEAR, ZONE_TORQUE, ZONE_WATTS, type RideSummary } from "@/lib/ride";
 import { fmtDist, fmtDuration, n } from "@/lib/format";
 import type { Units } from "@/lib/settings";
 import { Card } from "./ui";
@@ -46,9 +46,9 @@ export function RideDetails({ ride, units }: { ride: RideSummary; units: Units }
         <Pair label="Motor power" avg={`${n(ride.motorWAvg ?? 0)} W`} max={`${n(ride.motorWMax ?? 0)} W`} hint="Average over the time the motor was helping" />
         <Pair label="Your power" avg={`${n(ride.riderWAvg ?? 0)} W`} max={`${n(ride.riderWMax ?? 0)} W`} hint="Average over the time you were pedalling with force" />
         <Pair label="Cadence" avg={`${n(ride.cadenceAvg ?? 0)} rpm`} max={`${n(ride.cadenceMax ?? 0)} rpm`} hint="Average over the time the pedals were turning" />
-        <Pair label="Steepest" avg={`${n(ride.gradeUpPct ?? 0, 1)}%`} max={`${n(ride.gradeDownPct ?? 0, 1)}%`} avgLabel="up" maxLabel="down" hint="Over 100 m stretches ridden at 6 km/h or faster" />
+        <Pair label="Steepest" avg={`${n(ride.gradeUpPct ?? 0, 1)}%`} max={`${n(Math.abs(ride.gradeDownPct ?? 0), 1)}%`} avgLabel="up" maxLabel="down" hint="Over 100 m stretches ridden at 6 km/h or faster" />
         <Pair label="Your energy" avg={`${n(riderKj)} kJ`} max={`${n(riderKj / 4.184)} kcal`} avgLabel="" maxLabel="" hint="Work at the pedals, not calories burned: the body uses about four times as much" />
-        <Pair label="Battery" avg={batteryPer(ride, units)} max={ride.batteryStart !== null && ride.batteryEnd !== null ? `${ride.batteryStart - ride.batteryEnd}%` : "–"} avgLabel="per 1%" maxLabel="used" hint="Distance ridden for each 1% of battery" />
+        <Pair label="Battery" avg={batteryPer(ride, units)} max={batteryUsed(ride) > 0 ? `${batteryUsed(ride)}%` : "–"} avgLabel="per 1%" maxLabel="used" hint="Distance ridden for each 1% of battery" />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -62,8 +62,11 @@ export function RideDetails({ ride, units }: { ride: RideSummary; units: Units }
   );
 }
 
+/** Battery % used, or 0 when it wasn't recorded or went up (charged, or a gauge correction). */
+const batteryUsed = (ride: RideSummary) => (ride.batteryStart !== null && ride.batteryEnd !== null ? Math.max(0, ride.batteryStart - ride.batteryEnd) : 0);
+
 function batteryPer(ride: RideSummary, units: Units) {
-  const used = ride.batteryStart !== null && ride.batteryEnd !== null ? ride.batteryStart - ride.batteryEnd : 0;
+  const used = batteryUsed(ride);
   return used > 0 ? fmtDist(ride.km / used, units, 2) : "–";
 }
 
@@ -109,7 +112,8 @@ function Zones({ title, secs, labels, names, sub }: { title: string; secs: numbe
 function Gears({ ride }: { ride: RideSummary }) {
   const [pedalling, setPedalling] = useState(true);
   const map = pedalling ? ride.gearPedalS ?? {} : ride.gearS;
-  const top = Math.max(12, ...Object.keys(map).map(Number));
+  // Older imports can hold glitched gear numbers: leave out anything no drivetrain has.
+  const top = Math.max(12, ...Object.keys(map).map(Number).filter((g) => g <= MAX_GEAR));
   const gears = Array.from({ length: top }, (_, i) => map[String(i + 1)] ?? 0);
   const total = gears.reduce((a, b) => a + b, 0);
   const most = gears.indexOf(Math.max(...gears));

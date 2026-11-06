@@ -42,6 +42,7 @@ export function cleanSummary(input: unknown): RideSummary | null {
     end: num(r.end, start, start + 7 * 86400) || start,
     movingS: num(r.movingS, 0, 7 * 86400),
     km: num(r.km, 0, 2000),
+    ...(r.movingKm === undefined ? {} : { movingKm: num(r.movingKm, 0, 2000) }),
     ascentM: num(r.ascentM, 0, 50_000),
     descentM: num(r.descentM, 0, 50_000),
     maxKmh: num(r.maxKmh, 0, 120),
@@ -100,5 +101,8 @@ export function cleanTrack(input: unknown): TrackPoint[] {
     };
   });
 }
+
+/** A JSON request body that's an object (not null, an array or a number), else null. */
+export const asObject = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 export const cleanText = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");

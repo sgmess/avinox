@@ -10,6 +10,8 @@ export type RideSummary = {
   /** Seconds moving (speed over 2 km/h). */
   movingS: number;
   km: number;
+  /** Distance covered while moving, outside gaps in the recording: the distance that goes with movingS. */
+  movingKm?: number;
   ascentM: number;
   descentM: number;
   maxKmh: number;
@@ -88,7 +90,13 @@ export const ZONE_WATTS = [150, 350, 600, 850];
 /** The shortest gap that counts as missing data, whatever the sample rate. */
 const MIN_GAP_LIMIT_S = 2;
 const MOVING_KMH = 2;
-const TRACK_POINTS = 600;
+export const TRACK_POINTS = 1200;
+/** Readings past these are sensor glitches. They count as nothing, so they can't skew totals, zones or graphs. */
+const MAX_W = 3000;
+const MAX_NM = 200;
+const MAX_RPM = 250;
+const MAX_KMH = 80;
+export const MAX_GEAR = 14;
 
 const add = (o: Record<string, number>, k: number | null, v: number) => {
   if (k === null) return;
@@ -129,6 +137,34 @@ export function timeline(samples: Sample[]) {
   return { s, weights, unknownS, duplicates: sorted.length - s.length };
 }
 
+/**
+ * Drops glitched readings and rebuilds distance as a running total of forward
+ * steps, so a trip counter that resets mid-ride, or one impossible jump, can't
+ * make the ride shorter or longer than it was.
+ */
+export function cleanSamples(s: Sample[]): Sample[] {
+  let km = 0;
+  return s.map((x, i) => {
+    if (i > 0) {
+      const step = x.km - s[i - 1].km;
+      const dt = Math.max(1, x.t - s[i - 1].t);
+      if (step > 0 && step <= (MAX_KMH * dt) / 3600 + 0.05) km += step;
+    }
+    const ok = (v: number, max: number) => (v > 0 && v < max ? v : 0);
+    return {
+      ...x,
+      km,
+      speed: ok(x.speed, MAX_KMH),
+      cadence: ok(x.cadence, MAX_RPM),
+      motorTorque: ok(x.motorTorque, MAX_NM),
+      riderTorque: ok(x.riderTorque, MAX_NM),
+      riderPower: ok(x.riderPower, MAX_W),
+      motorPower: ok(x.motorPower, MAX_W),
+      gear: x.gear !== null && x.gear >= 1 && x.gear <= MAX_GEAR ? x.gear : null,
+    };
+  });
+}
+
 function zone(v: number, limits: number[]) {
   // The fourth zone's upper limit is inclusive (105 Nm, 850 W).
   let i = 0;
@@ -137,7 +173,9 @@ function zone(v: number, limits: number[]) {
 }
 
 export function summarise(file: RideFile): { summary: RideSummary; track: TrackPoint[] } {
-  const { s, weights, unknownS, duplicates } = timeline(file.samples);
+  const t = timeline(file.samples);
+  const { weights, unknownS, duplicates } = t;
+  const s = cleanSamples(t.s);
   const modeS: Record<string, number> = {};
   const modeKm: Record<string, number> = {};
   const modeMotorWh: Record<string, number> = {};
@@ -148,6 +186,7 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
   const wattZoneS = [0, 0, 0, 0, 0];
   let observedS = 0;
   let movingS = 0;
+  let movingKm = 0;
   let motorWh = 0;
   let riderWh = 0;
   let maxKmh = 0;
@@ -180,6 +219,7 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     add(modeKm, a.assist, dKm);
     if (moving) {
       movingS += dt;
+      movingKm += dKm;
       add(modeS, a.assist, dt);
       if (a.gear) add(gearS, a.gear, dt);
       if (a.motorTorque > 0) torqueS[Math.min(TORQUE_BANDS - 1, Math.floor(a.motorTorque / 10))] += dt;
@@ -190,20 +230,20 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     if (prev && weights[i - 1] > 0 && a.gear && prev.gear && a.gear !== prev.gear) gearChanges++;
     if (a.motorTorque > 0) torqueZoneS[zone(a.motorTorque, ZONE_TORQUE)] += dt;
     if (a.motorPower > 0) wattZoneS[zone(a.motorPower, ZONE_WATTS)] += dt;
-    // Readings past these are sensor glitches, not a top speed, torque or power.
-    if (a.speed > maxKmh && a.speed < 80) maxKmh = a.speed;
-    if (a.motorTorque > maxTorque && a.motorTorque < 200) maxTorque = a.motorTorque;
-    if (a.riderPower > 0 && a.riderPower < 3000) {
+    // Glitched readings are already zero (cleanSamples).
+    maxKmh = Math.max(maxKmh, a.speed);
+    maxTorque = Math.max(maxTorque, a.motorTorque);
+    if (a.riderPower > 0) {
       power.rider += a.riderPower * dt;
       power.riderS += dt;
       power.riderMax = Math.max(power.riderMax, a.riderPower);
     }
-    if (a.motorPower > 0 && a.motorPower < 3000) {
+    if (a.motorPower > 0) {
       power.motor += a.motorPower * dt;
       power.motorS += dt;
       power.motorMax = Math.max(power.motorMax, a.motorPower);
     }
-    if (a.cadence > 0 && a.cadence < 250) {
+    if (a.cadence > 0) {
       power.cadence += a.cadence * dt;
       power.cadenceS += dt;
       power.cadenceMax = Math.max(power.cadenceMax, a.cadence);
@@ -239,7 +279,8 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     start,
     end: file.end > start ? file.end : last?.t ?? start,
     movingS: Math.round(movingS),
-    km: round(last ? last.km - (first?.km ?? 0) : 0, 3),
+    km: round(last?.km ?? 0, 3),
+    movingKm: round(movingKm, 3),
     ascentM: round(file.ascentM || elevation.up, 0),
     descentM: round(file.descentM || elevation.down, 0),
     maxKmh: round(maxKmh, 1),
