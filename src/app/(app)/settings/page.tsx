@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireViewer } from "@/lib/auth";
 import { getSettings, listRides } from "@/lib/data";
 import { SettingsForm } from "@/components/SettingsForm";
+import { BackupCard } from "@/components/BackupCard";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Settings · Ride Stats" };
@@ -17,6 +18,7 @@ export default async function SettingsPage() {
       </Link>
       <h1 className="font-display text-3xl font-semibold">Settings</h1>
       <SettingsForm settings={settings} seenModes={seen} email={viewer.email} />
+      <BackupCard />
     </div>
   );
 }

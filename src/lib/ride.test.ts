@@ -153,7 +153,10 @@ test("a ride ending at zero battery keeps its full battery consumption", () => {
 
 test("settings are cleaned", () => {
   const s = cleanSettings({ units: "km", batteryWh: "600", modeNames: { "20": " Hills ", bad: "x" }, bikeName: 5 });
-  assert.deepEqual(s, { units: "km", batteryWh: 600, bikeName: "", modeNames: { "20": "Hills" }, timeZone: "Europe/London", batteryHistory: [] });
+  assert.deepEqual(s, { units: "km", batteryWh: 600, bikeName: "", modeNames: { "20": "Hills" }, timeZone: "Europe/London", batteryHistory: [], pricePerKwh: 0.27, currency: "£" });
+  assert.equal(cleanSettings({ pricePerKwh: "0.31", currency: " € " }).pricePerKwh, 0.31);
+  assert.equal(cleanSettings({ pricePerKwh: -1 }).pricePerKwh, 0.27);
+  assert.equal(cleanSettings({ currency: " € " }).currency, "€");
   const t = cleanSettings({ timeZone: "Mars/Olympus", batteryHistory: [{ until: 1_800_000_000, wh: 500 }, { until: 1_700_000_000, wh: 625 }, { until: "x", wh: 600 }, null] });
   assert.equal(t.timeZone, "Europe/London");
   assert.deepEqual(t.batteryHistory, [{ until: 1_700_000_000, wh: 625 }, { until: 1_800_000_000, wh: 500 }]);

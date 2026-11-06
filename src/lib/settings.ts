@@ -14,6 +14,10 @@ export type Settings = {
    * before `until` (Unix seconds) used `wh`. Rides after the last use batteryWh.
    */
   batteryHistory: { until: number; wh: number }[];
+  /** What a kWh from the wall costs, in `currency`. */
+  pricePerKwh: number;
+  /** Symbol shown before money, e.g. "£". */
+  currency: string;
 };
 
 /*
@@ -26,7 +30,25 @@ export const DEFAULT_MODE_NAMES: Record<string, string> = { "0": "Off", "1": "Ec
 
 export const DEFAULT_TIME_ZONE = "Europe/London";
 
-export const DEFAULT_SETTINGS: Settings = { units: "mi", batteryWh: 800, bikeName: "", modeNames: {}, timeZone: DEFAULT_TIME_ZONE, batteryHistory: [] };
+export const DEFAULT_SETTINGS: Settings = {
+  units: "mi",
+  batteryWh: 800,
+  bikeName: "",
+  modeNames: {},
+  timeZone: DEFAULT_TIME_ZONE,
+  batteryHistory: [],
+  pricePerKwh: 0.27,
+  currency: "£",
+};
+
+/** About a tenth of what the charger draws never reaches the pack. */
+export const CHARGER_EFFICIENCY = 0.9;
+
+/** What putting `packWh` back into the battery costs at the wall. */
+export const chargeCost = (packWh: number, s: Pick<Settings, "pricePerKwh">) => (packWh / 1000 / CHARGER_EFFICIENCY) * s.pricePerKwh;
+
+export const fmtMoney = (x: number, s: Pick<Settings, "currency">) =>
+  `${s.currency}${x.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** The pack size a ride starting at `t` was ridden on. */
 export function batteryWhAt(s: Settings, t: number) {
@@ -93,5 +115,10 @@ export function cleanSettings(input: unknown): Settings {
     modeNames: names,
     timeZone: validTimeZone(o.timeZone) ? o.timeZone : DEFAULT_TIME_ZONE,
     batteryHistory: history,
+    pricePerKwh: (() => {
+      const p = Number(o.pricePerKwh);
+      return Number.isFinite(p) && p >= 0 && p <= 10 ? Math.round(p * 10000) / 10000 : DEFAULT_SETTINGS.pricePerKwh;
+    })(),
+    currency: typeof o.currency === "string" && o.currency.trim() ? o.currency.trim().slice(0, 4) : DEFAULT_SETTINGS.currency,
   };
 }

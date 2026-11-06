@@ -25,6 +25,17 @@ The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's
 - **Battery health**: motor Wh per 1% of battery on rides using 20%+, a rolling median of 10 rides against the first 10.
 - **Cold costs range**: Wh per km by the lowest temperature on the ride, below 10 °C against above 15 °C.
 
+## Planning and comparing
+
+- **Range planner** (dashboard): a distance and climb give the battery % each mode would take. The route is priced with the climbing model below, at your usual mix of modes, then scaled by each mode's Wh per km against your average. Optionally with the cold-weather penalty.
+- **Climbing efficiency**: pack Wh is split into a cost per km and a cost per metre climbed by least squares across rides (Wh ≈ a·km + b·climb); needs 8+ rides with different amounts of climbing. Rides are also grouped flat / rolling / hilly / steep by climb per km.
+- **Trends**: your power, motor power, heart rate and cadence per ride, with a 10-ride rolling median.
+- **Heatmap** (`/heatmap`): every route on one map, faint lines adding up where you ride most; filter by year.
+- **Compare** (a ride's Compare button): rides covering mostly the same ~200 m grid squares (45%+ overlap, distance within 25%), and each climb of 40 m+ at 3%+ against every other ride that passed its start and top: time, speed, your power, motor power, assist mix and battery. Works from the stored routes, so older imports are included.
+- **Backup** (Settings): one JSON file with settings, every ride's details (names and notes too) and routes; restore skips or replaces rides already there.
+- **Import**: uploads that fail on a dropped connection or a busy server are retried twice automatically, then offered for retry; every skipped or unreadable file is listed with the reason.
+- **Electricity price** (Settings): for the charging cost on the dashboard and each ride, allowing a tenth for charger losses.
+
 ## Privacy
 
 Each rider's data lives under `riders/{uid}` (settings), `riders/{uid}/rides/{id}` (summaries) and `riders/{uid}/tracks/{id}` (routes), read and written only by the server for the signed-in rider. Firestore rules deny all browser access. Pages need sign-in except `/demo` and `/login`, and the site asks search engines not to index it.
@@ -67,5 +78,9 @@ The map includes a public CARTO basemap key. To use a different key, set
 | `src/components/RideView.tsx`, `RideMap.tsx` | A ride's page (Leaflet map, CARTO dark tiles) |
 | `src/components/RideDetails.tsx` | A ride's power, cadence, zones, gears and gradients |
 | `src/components/StoryImage.tsx` | The story image for a ride |
+| `src/lib/insights.ts` | Climbing model, hill bands, range planner, route and climb matching |
+| `src/components/DashboardInsights.tsx` | Planner, climbing efficiency and trends cards |
+| `src/components/CompareView.tsx`, `Heatmap.tsx` | The compare and heatmap pages |
+| `src/lib/backup.ts`, `src/app/api/backup/` | Backup export and restore |
 | `src/components/Importer.tsx` | Drop files or a folder; parses, skips known rides, saves three at a time |
 | `src/app/api/` | Session cookie, rides, settings |

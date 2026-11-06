@@ -3,10 +3,11 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { RideSummary } from "@/lib/ride";
 import { computeStats, median, type Stats } from "@/lib/stats";
-import type { Settings, Units } from "@/lib/settings";
+import { chargeCost, fmtMoney, type Settings, type Units } from "@/lib/settings";
 import { dist, distUnit, fmtDate, fmtDist, fmtHeight, fmtHours, fmtSpeed, height, monthLabel, n, perDist } from "@/lib/format";
 import { ButtonLink, Card, Empty, Logo, Stat, UnitSwitch } from "./ui";
 import { RideTable } from "./RideTable";
+import { ClimbingCard, PlannerCard, TrendsCard } from "./DashboardInsights";
 
 type Props = {
   rides: RideSummary[];
@@ -46,6 +47,7 @@ export function Dashboard({ rides, settings, base, demo }: Props) {
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <UnitSwitch units={units} onChange={changeUnits} />
+          {rides.length > 0 && <ButtonLink href={demo ? "/demo/heatmap" : "/heatmap"}>Heatmap</ButtonLink>}
           {demo ? (
             <ButtonLink href="/login" primary>
               Sign in to add yours
@@ -76,7 +78,7 @@ export function Dashboard({ rides, settings, base, demo }: Props) {
         </section>
       ) : (
         <>
-          <Kpis st={st} units={units} />
+          <Kpis st={st} units={units} settings={s} />
           <div className="grid gap-4 lg:grid-cols-2">
             <MonthsCard st={st} units={units} selected={month} onSelect={setMonth} />
             <ModesCard st={st} units={units} />
@@ -84,6 +86,13 @@ export function Dashboard({ rides, settings, base, demo }: Props) {
           <div className="grid gap-4 lg:grid-cols-2">
             <RangeCard st={st} units={units} />
             <HealthCard st={st} settings={s} />
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <PlannerCard key={units} st={st} settings={s} />
+            <ClimbingCard st={st} settings={s} />
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <TrendsCard st={st} />
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <GearsCard st={st} />
@@ -105,10 +114,7 @@ export function Dashboard({ rides, settings, base, demo }: Props) {
   );
 }
 
-/** Charging at about 27p a kWh, with a tenth lost in the charger. */
-const electricityCost = (packWh: number) => (packWh / 1000 / 0.9) * 0.27;
-
-function Kpis({ st, units }: { st: Stats; units: Units }) {
+function Kpis({ st, units, settings }: { st: Stats; units: Units; settings: Settings }) {
   const t = st.totals;
   const everest = height(t.ascentM, "km") / 8849;
   const trend = t.thisYear && t.lastYear ? t.thisYear / t.lastYear - 1 : null;
@@ -117,7 +123,7 @@ function Kpis({ st, units }: { st: Stats; units: Units }) {
       <Stat label="Distance" value={fmtDist(t.km, units, 0)} sub={`${n(t.rides)} rides`} />
       <Stat label="Riding time" value={fmtHours(t.movingS)} sub={t.rides ? `about ${Math.round(t.movingS / t.rides / 60)} min a ride` : undefined} />
       <Stat label="Climbed" value={fmtHeight(t.ascentM, units)} sub={everest >= 1 ? `${n(everest, everest < 10 ? 1 : 0)} times up Everest` : undefined} />
-      <Stat label="Battery used" value={`${n(t.wh / 1000, 1)} kWh`} sub={`about £${n(electricityCost(t.wh), 2)} of electricity`} />
+      <Stat label="Battery used" value={`${n(t.wh / 1000, 1)} kWh`} sub={`about ${fmtMoney(chargeCost(t.wh, settings), settings)} of electricity`} />
       <Stat
         className="col-span-2 md:col-span-1"
         label="Efficiency"
