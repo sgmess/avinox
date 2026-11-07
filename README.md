@@ -40,7 +40,7 @@ The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's
 
 Each rider's data lives under `riders/{uid}` (settings), `riders/{uid}/rides/{id}` (summaries) and `riders/{uid}/tracks/{id}` (routes), read and written only by the server for the signed-in rider. Firestore rules deny all browser access. Pages need sign-in except `/demo` and `/login`, and the site asks search engines not to index it.
 
-In production the site uses PostHog (EU) for usage counts, error reports and the occasional feedback prompt. Signed-in riders are identified there by their Firebase uid, email and display name; ride data isn't sent. Sign out everywhere (Settings) revokes every session the rider has.
+The site sends no analytics or tracking. Sign out everywhere (Settings) revokes every session the rider has.
 
 ## Running locally
 

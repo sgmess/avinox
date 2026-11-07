@@ -17,13 +17,15 @@ type Status = {
   saved: number;
   skipped: Problem[];
   unreadable: Problem[];
+  /** Saved, but read without checksums: worth a look. */
+  unverified: Problem[];
   unsaved: Unsaved[];
   latest: string;
   /** Set when the import couldn't start at all. */
   error: string;
 };
 
-const START: Status = { phase: "idle", found: 0, ignored: 0, fresh: 0, saved: 0, skipped: [], unreadable: [], unsaved: [], latest: "", error: "" };
+const START: Status = { phase: "idle", found: 0, ignored: 0, fresh: 0, saved: 0, skipped: [], unreadable: [], unverified: [], unsaved: [], latest: "", error: "" };
 const AT_ONCE = 3;
 /** Automatic tries after the first, for dropped connections and busy servers. */
 const AUTO_RETRIES = 2;
@@ -87,6 +89,7 @@ export function Importer() {
     const jobs: Job[] = [];
     const skipped: Problem[] = [];
     const unreadable: Problem[] = [];
+    const unverified: Problem[] = [];
     for (const f of candidates) {
       try {
         const buf = await f.arrayBuffer();
@@ -109,12 +112,13 @@ export function Importer() {
           continue;
         }
         queued.set(summary.id, f.name);
+        if (summary.checksumsVerified === false) unverified.push({ name: f.name, why: "no checksum matched: read without them" });
         jobs.push({ name: f.name, body: JSON.stringify({ summary, track }), label: fmtDay(summary.start) });
       } catch (e) {
         unreadable.push({ name: f.name, why: (e as Error).message || "couldn't be read" });
       }
     }
-    setSt((s) => ({ ...s, phase: "saving", fresh: jobs.length, skipped, unreadable }));
+    setSt((s) => ({ ...s, phase: "saving", fresh: jobs.length, skipped, unreadable, unverified }));
     await save(jobs);
   }
 
@@ -270,6 +274,14 @@ function Progress({ st, onRetry }: { st: Status; onRetry: () => void }) {
         <details className="mt-3 text-[13px]">
           <summary className="cursor-pointer text-warn">{n(st.unreadable.length)} couldn&apos;t be read</summary>
           <Reasons items={st.unreadable} />
+        </details>
+      )}
+      {st.unverified.length > 0 && (
+        <details className="mt-3 text-[13px]">
+          <summary className="cursor-pointer text-warn">
+            {n(st.unverified.length)} {st.unverified.length === 1 ? "ride" : "rides"} read without checksums: probably different firmware, but check {st.unverified.length === 1 ? "it looks" : "they look"} right
+          </summary>
+          <Reasons items={st.unverified} />
         </details>
       )}
       {st.skipped.length > 0 && (

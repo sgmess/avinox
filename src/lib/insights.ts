@@ -139,6 +139,8 @@ export type Climb = { from: number; to: number; km: number; gainM: number; grade
  */
 export function findClimbs(track: TrackPoint[], minGain = 40): Climb[] {
   const pts = track.map((p, i) => ({ i, km: p.km, alt: p.alt })).filter((p): p is { i: number; km: number; alt: number } => p.alt !== null);
+  // No route, or no altitude on it: nothing to climb (and nothing for close() to read).
+  if (pts.length < 2) return [];
   const out: Climb[] = [];
   let low = 0;
   let high = 0;
@@ -179,19 +181,36 @@ export type Effort = {
   modes: Record<string, number>;
 };
 
-/** What a stretch of a route took: time, both riders' energy, battery and assist. */
-export function effort(track: TrackPoint[], from: number, to: number): Effort {
+/**
+ * The longest step between track points that still counts as riding. The
+ * track is thinned evenly by reading, so steps are about the same length; one
+ * far longer than usual spans a gap in the recording.
+ */
+export function gapLimit(track: TrackPoint[]) {
+  const steps = track
+    .slice(1)
+    .map((p, i) => p.s - track[i].s)
+    .filter((d) => d > 0)
+    .sort((a, b) => a - b);
+  const usual = steps.length ? steps[Math.floor(steps.length / 2)] : 1;
+  return Math.max(10, 3 * usual);
+}
+
+/** What a stretch of a route took: time, both riders' energy, battery and assist. Gaps in the recording count as none of these. */
+export function effort(track: TrackPoint[], from: number, to: number, limit = gapLimit(track)): Effort {
   let riderWh = 0;
   let motorWh = 0;
+  let seconds = 0;
   const modeS: Record<string, number> = {};
   for (let i = from; i < to; i++) {
-    const dt = Math.max(0, track[i + 1].s - track[i].s);
+    const step = track[i + 1].s - track[i].s;
+    const dt = step > 0 && step <= limit ? step : 0;
+    seconds += dt;
     riderWh += (track[i].riderW * dt) / 3600;
     motorWh += (track[i].motorW * dt) / 3600;
     const a = track[i].assist;
     if (a !== null) modeS[a] = (modeS[a] ?? 0) + dt;
   }
-  const seconds = Math.max(0, track[to].s - track[from].s);
   const total = Object.values(modeS).reduce((a, b) => a + b, 0) || 1;
   const b0 = track[from].battery;
   const b1 = track[to].battery;

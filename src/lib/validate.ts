@@ -66,6 +66,7 @@ export function cleanSummary(input: unknown): RideSummary | null {
     unknownS: num(r.unknownS, 0, 7 * 86400),
     duplicates: num(r.duplicates, 0, 1e7),
     badFrames: num(r.badFrames, 0, 1e7),
+    checksumsVerified: r.checksumsVerified !== false,
     riderWAvg: num(r.riderWAvg, 0, 5000),
     riderWMax: num(r.riderWMax, 0, 5000),
     motorWAvg: num(r.motorWAvg, 0, 5000),

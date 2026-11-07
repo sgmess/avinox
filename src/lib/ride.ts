@@ -45,6 +45,8 @@ export type RideSummary = {
   /** Samples sharing a timestamp (the last one is kept) and frames dropped for a bad checksum. */
   duplicates?: number;
   badFrames?: number;
+  /** False when the file was read without its checksums (see parseRide). */
+  checksumsVerified?: boolean;
   /** Averages count only the time each is above zero. W and rpm. */
   riderWAvg?: number;
   riderWMax?: number;
@@ -304,6 +306,7 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     unknownS: Math.round(unknownS),
     duplicates,
     badFrames: file.badFrames ?? 0,
+    checksumsVerified: file.checksumsVerified,
     riderWAvg: avg(power.rider, power.riderS),
     riderWMax: round(power.riderMax, 1),
     motorWAvg: avg(power.motor, power.motorS),

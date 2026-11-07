@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getViewer } from "@/lib/auth";
 import { ridesCol, tracksCol, db } from "@/lib/firebase-admin";
 import { asObject, cleanSummary, cleanTrack } from "@/lib/validate";
-import { track as count } from "@/lib/track";
 
 /** The ids already saved, so the import can skip rides it has seen. */
 export async function GET() {
@@ -19,7 +18,6 @@ export async function POST(req: Request) {
   const body = asObject(await req.json().catch(() => null));
   const cleaned = cleanSummary(body?.summary);
   if (!cleaned) return NextResponse.json({ error: "That ride couldn't be read" }, { status: 400 });
-  await count("ride_uploaded");
   const summary = cleaned;
   const ref = ridesCol(viewer.uid).doc(summary.id);
   const track = cleanTrack(body?.track);

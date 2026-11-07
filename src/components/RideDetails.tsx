@@ -153,6 +153,16 @@ function DataNote({ ride }: { ride: RideSummary }) {
   const parts = [`${fmtDuration(ride.observedS ?? 0)} of readings`];
   if (ride.unknownS) parts.push(`${fmtDuration(ride.unknownS)} in gaps left out of times and averages`);
   if (ride.duplicates) parts.push(`${n(ride.duplicates)} repeated timestamps counted once`);
-  if (ride.badFrames) parts.push(`${n(ride.badFrames)} damaged ${ride.badFrames === 1 ? "reading" : "readings"} skipped`);
-  return <p className="text-xs text-muted">Data: {parts.join(" · ")}. Each reading holds until the next one if that comes within a couple of seconds.</p>;
+  const unverified = ride.checksumsVerified === false;
+  if (ride.badFrames && !unverified) parts.push(`${n(ride.badFrames)} damaged ${ride.badFrames === 1 ? "reading" : "readings"} skipped`);
+  return (
+    <>
+      {unverified && (
+        <p className="rounded-xl border border-edge px-4 py-3 text-[13px] text-warn" role="note">
+          None of this file&apos;s checksums matched, so it was read without them. That usually means firmware that writes them differently, but the file could be damaged: treat odd figures with care.
+        </p>
+      )}
+      <p className="text-xs text-muted">Data: {parts.join(" · ")}. Each reading holds until the next one if that comes within a couple of seconds.</p>
+    </>
+  );
 }

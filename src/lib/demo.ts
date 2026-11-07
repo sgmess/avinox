@@ -88,7 +88,7 @@ export function demoRide(seed: number, start: number, opts: { km: number; hilly:
     modeLeftKm -= dKm;
     t += STEP_S;
   }
-  return { rideId: seed, serial: "DEMO", start, end: t, ascentM: 0, descentM: 0, samples, badFrames: 0 };
+  return { rideId: seed, serial: "DEMO", start, end: t, ascentM: 0, descentM: 0, samples, badFrames: 0, checksumsVerified: true };
 }
 
 const DEMO_ROUTES = [

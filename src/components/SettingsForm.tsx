@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { DEFAULT_MODE_NAMES, modeName, type Settings } from "@/lib/settings";
+import { dayStart, todayIn } from "@/lib/format";
 import { clientAuth, firebaseConfigured } from "@/lib/firebase-client";
 import { Card } from "./ui";
 
@@ -20,10 +21,17 @@ function timeZones(): string[] {
 export function SettingsForm({ settings, seenModes, email }: { settings: Settings; seenModes: string[]; email: string }) {
   const router = useRouter();
   const [s, setS] = useState(settings);
+  // Take in settings saved elsewhere (a backup restore, another tab) when the page refreshes,
+  // so a later Save can't write the old values back. Keyed on content: a refresh with the
+  // same settings leaves edits in progress alone.
+  const saved = JSON.stringify(settings);
+  useEffect(() => {
+    setS(JSON.parse(saved) as Settings);
+  }, [saved]);
   const [state, setState] = useState<"" | "saving" | "saved" | "error">("");
   // When the pack size changes: a new battery from a date, or a correction for every ride.
   const [packChange, setPackChange] = useState<"new" | "fix">("new");
-  const [swapDate, setSwapDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [swapDate, setSwapDate] = useState(() => todayIn(settings.timeZone));
   const packChanged = s.batteryWh !== settings.batteryWh;
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -46,9 +54,10 @@ export function SettingsForm({ settings, seenModes, email }: { settings: Setting
     setState("saving");
     let next = s;
     if (packChanged && packChange === "new") {
-      // Rides before the swap keep the old pack (local midnight of the chosen day).
-      const until = Math.round(new Date(`${swapDate}T00:00`).getTime() / 1000);
-      if (Number.isFinite(until)) next = { ...s, batteryHistory: [...s.batteryHistory.filter((b) => b.until < until), { until, wh: settings.batteryWh }] };
+      // Rides before the swap keep the old pack: midnight of the chosen day in the rider's
+      // timezone (Settings), not the device's, so travelling doesn't move the boundary.
+      const until = dayStart(swapDate, s.timeZone);
+      if (until !== null) next = { ...s, batteryHistory: [...s.batteryHistory.filter((b) => b.until < until), { until, wh: settings.batteryWh }] };
     }
     const res = await fetch("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(next) }).catch(() => null);
     if (res?.ok) setS(next);
@@ -98,7 +107,7 @@ export function SettingsForm({ settings, seenModes, email }: { settings: Setting
                   <label className="flex min-h-9 items-center gap-2">
                     <input type="radio" name="pack" checked={packChange === "new"} onChange={() => setPackChange("new")} />
                     New battery from
-                    <input type="date" className={`${input} min-h-9`} value={swapDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setSwapDate(e.target.value)} disabled={packChange !== "new"} />
+                    <input type="date" className={`${input} min-h-9`} value={swapDate} max={todayIn(s.timeZone)} onChange={(e) => setSwapDate(e.target.value)} disabled={packChange !== "new"} />
                   </label>
                   <label className="flex min-h-9 items-center gap-2">
                     <input type="radio" name="pack" checked={packChange === "fix"} onChange={() => setPackChange("fix")} />

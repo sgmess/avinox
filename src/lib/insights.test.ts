@@ -103,3 +103,24 @@ test("backups are recognised", () => {
   assert.equal(readBackup({ app: "ride-stats", version: 99, rides: [] }).ok, false);
   assert.equal(readBackup([]).ok, false);
 });
+
+test("routes with no points or no altitude have no climbs (and comparing them doesn't crash)", () => {
+  const flat: TrackPoint = { km: 0, lat: 52, lng: -2, alt: null, speed: 20, motorW: 200, riderW: 150, assist: 1, hr: null, battery: 90, s: 0 };
+  const noAlt = Array.from({ length: 50 }, (_, i) => ({ ...flat, km: i / 10, s: i * 18 }));
+  assert.deepEqual(findClimbs([]), []);
+  assert.deepEqual(findClimbs(noAlt), []);
+  assert.deepEqual(findClimbs(noAlt.slice(0, 1).map((p) => ({ ...p, alt: 100 }))), []);
+  assert.deepEqual(compareRide(base, [], []).climbs, []);
+  assert.deepEqual(compareRide(base, noAlt, [{ ride: base, track: noAlt }]).climbs, []);
+});
+
+test("a gap in the recording adds no time or energy to an effort", () => {
+  const p: TrackPoint = { km: 0, lat: 52, lng: -2, alt: 100, speed: 20, motorW: 360, riderW: 200, assist: 2, hr: null, battery: 90, s: 0 };
+  // 5 s apart, with an hour missing between the 10th and 11th points.
+  const track = Array.from({ length: 21 }, (_, i) => ({ ...p, km: i * 0.03, s: i * 5 + (i > 10 ? 3600 : 0) }));
+  const e = effort(track, 0, 20);
+  assert.equal(e.seconds, 95);
+  assert.ok(Math.abs(e.motorWh - (360 * 95) / 3600) < 1e-9, `motorWh ${e.motorWh}`);
+  assert.ok(Math.abs(e.riderWh - (200 * 95) / 3600) < 1e-9);
+  assert.deepEqual(e.modes, { "2": 1 });
+});
