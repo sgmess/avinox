@@ -48,6 +48,30 @@ export const fmtShortDate = (t: number, tz = TZ) => new Date(t * 1000).toLocaleD
 /** The hour (0–23) a ride started. */
 export const hourOf = (t: number, tz = TZ) => Number(new Date(t * 1000).toLocaleString("en-GB", { timeZone: tz, hour: "numeric", hourCycle: "h23" }));
 
+/** "2026-11-07": today's date in a timezone, as a date input wants it. */
+export const todayIn = (tz = TZ, now = Date.now()) => new Date(now).toLocaleDateString("en-CA", { timeZone: tz });
+
+/** How far a timezone is ahead of UTC at a moment, ms. */
+function zoneOffset(ms: number, tz: string) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+      .formatToParts(new Date(ms))
+      .map((x) => [x.type, Number(x.value)]),
+  );
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+}
+
+/** Unix seconds at midnight starting "2026-11-07" in a timezone (not the device's), or null for a bad date. */
+export function dayStart(date: string, tz = TZ): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return null;
+  const wall = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // Guess with the offset at wall-clock midnight, then correct once in case a clock change sits between.
+  let ms = wall - zoneOffset(wall, tz);
+  ms = wall - zoneOffset(ms, tz);
+  return Number.isFinite(ms) ? Math.round(ms / 1000) : null;
+}
+
 /** "2026-03" for the month a ride started in. */
 export function monthKey(t: number, tz = TZ) {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "2-digit" }).formatToParts(new Date(t * 1000));

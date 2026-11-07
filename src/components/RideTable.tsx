@@ -6,6 +6,8 @@ import { modeName, type Settings } from "@/lib/settings";
 import { avgKmh, modeParts, rideWhPerKm } from "@/lib/stats";
 import { KM_PER_MI, dist, distUnit, fmtDate, fmtDay, fmtDuration, fmtShortDate, height, heightUnit, monthKey, monthLabel, n, perDist, speedUnit } from "@/lib/format";
 import { ModeBar } from "./ui";
+import { ConfidenceDot } from "./Confidence";
+import { CONFIDENCE_LABEL, rideConfidence } from "@/lib/confidence";
 
 type SortKey = "start" | "km" | "movingS" | "speed" | "ascentM" | "used" | "wh";
 const PAGE = 50;
@@ -65,7 +67,7 @@ export function RideTable({
   );
 
   function downloadCsv() {
-    const cols = ["Date", "Name", `Distance (${distUnit(u)})`, "Moving time (min)", `Avg speed (${speedUnit(u)})`, `Max speed (${speedUnit(u)})`, `Climb (${heightUnit(u)})`, "Battery start %", "Battery end %", `Battery Wh/${distUnit(u)}`, "Motor Wh", "Rider Wh", "Min temp °C", "Max temp °C", "Avg heart rate"];
+    const cols = ["Date", "Name", `Distance (${distUnit(u)})`, "Moving time (min)", `Avg speed (${speedUnit(u)})`, `Max speed (${speedUnit(u)})`, `Climb (${heightUnit(u)})`, "Battery start %", "Battery end %", `Battery Wh/${distUnit(u)}`, "Motor Wh", "Rider Wh", "Min temp °C", "Max temp °C", "Avg heart rate", "Data confidence"];
     const modes = [...new Set(rides.flatMap((r) => Object.keys(r.modeS)))];
     const lines = [
       [...cols, ...modes.map((m) => `${modeName(settings, m)} (min)`)],
@@ -88,6 +90,7 @@ export function RideTable({
           r.tempMin ?? "",
           r.tempMax ?? "",
           r.hrAvg ?? "",
+          CONFIDENCE_LABEL[rideConfidence(r).level],
           ...modes.map((m) => ((r.modeS[m] ?? 0) / 60).toFixed(0)),
         ];
       }),
@@ -159,6 +162,7 @@ export function RideTable({
                 <tr key={r.id} className="border-t border-line">
                   <td className="px-2.5 py-3">
                     <Link href={`${base}/${r.id}`}>{fmtDay(r.start, tz)}</Link>
+                    <ConfidenceDot ride={r} />
                     {r.name && <div className="text-xs text-muted">{r.name}</div>}
                   </td>
                   <td className="px-2.5 py-3 text-right">{n(dist(r.km, u), 1)}</td>

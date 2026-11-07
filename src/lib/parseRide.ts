@@ -62,6 +62,12 @@ export type RideFile = {
   samples: Sample[];
   /** Frames dropped for a bad checksum or an unreadable payload. */
   badFrames: number;
+  /**
+   * False when no frame passed the checksum and the file was read without it
+   * (likely firmware that checks differently, possibly a damaged file).
+   * badFrames then keeps the checksum failures as well.
+   */
+  checksumsVerified: boolean;
 };
 
 type Fields = Record<number, bigint | Uint8Array>;
@@ -219,9 +225,16 @@ export function parseRide(buffer: ArrayBuffer): RideFile {
   for (let i = 110; i < 128 && bytes[i]; i++) serial += String.fromCharCode(bytes[i]);
 
   let { samples, badFrames } = readFrames(bytes, view, true);
+  let checksumsVerified = true;
   // The checksum is known from one firmware's files. If none pass, this file's
-  // firmware likely checks them differently: read it the way the bike lays it out.
-  if (!samples.length && badFrames) ({ samples, badFrames } = readFrames(bytes, view, false));
+  // firmware likely checks them differently: read it the way the bike lays it
+  // out, but keep the failures and flag the ride so the warning isn't lost.
+  if (!samples.length && badFrames) {
+    const unchecked = readFrames(bytes, view, false);
+    samples = unchecked.samples;
+    badFrames += unchecked.badFrames;
+    checksumsVerified = false;
+  }
 
   return {
     rideId: view.getUint32(6, true),
@@ -232,5 +245,6 @@ export function parseRide(buffer: ArrayBuffer): RideFile {
     descentM: view.getFloat32(26, true),
     samples: samples.filter((s) => s.t > 0),
     badFrames,
+    checksumsVerified,
   };
 }

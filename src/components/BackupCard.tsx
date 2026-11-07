@@ -5,10 +5,13 @@ import { RESTORE_BATCH, readBackup, type BackupRide } from "@/lib/backup";
 import { n } from "@/lib/format";
 import { Card } from "./ui";
 
+/** What happened to the backup's settings: not asked for (or none in the file), restored, or failed. */
+type SettingsResult = "none" | "restored" | "failed";
+
 type State =
   | { phase: "idle" }
   | { phase: "restoring"; done: number; total: number }
-  | { phase: "done"; saved: number; skipped: number; invalid: number; failed: number; settings: boolean }
+  | { phase: "done"; saved: number; skipped: number; invalid: number; failed: number; settings: SettingsResult }
   | { phase: "error"; why: string };
 
 /** Tries a request three times before giving up, for dropped connections. */
@@ -44,10 +47,10 @@ export function BackupCard() {
     const { rides, settings } = read.backup;
     if (!confirm(`Restore ${rides.length} ${rides.length === 1 ? "ride" : "rides"}${withSettings ? " and your settings" : ""}? ${overwrite ? "Rides already here will be replaced." : "Rides already here are kept as they are."}`)) return;
 
-    let restoredSettings = false;
+    let settingsResult: SettingsResult = "none";
     if (withSettings && settings) {
       const res = await send("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(settings) });
-      restoredSettings = !!res?.ok;
+      settingsResult = res?.ok ? "restored" : "failed";
     }
     const total = { saved: 0, skipped: 0, invalid: 0, failed: 0 };
     setState({ phase: "restoring", done: 0, total: rides.length });
@@ -62,7 +65,7 @@ export function BackupCard() {
       } else total.failed += chunk.length;
       setState({ phase: "restoring", done: Math.min(rides.length, i + RESTORE_BATCH), total: rides.length });
     }
-    setState({ phase: "done", ...total, settings: restoredSettings });
+    setState({ phase: "done", ...total, settings: settingsResult });
     router.refresh();
   }
 
@@ -100,9 +103,10 @@ export function BackupCard() {
       <div aria-live="polite" className="mt-2 text-sm">
         {state.phase === "restoring" && <p className="text-soft">Restoring {n(state.done)} of {n(state.total)} rides…</p>}
         {state.phase === "done" && (
-          <p className={state.failed ? "text-warn" : "text-soft"}>
+          <p className={state.failed || state.settings === "failed" ? "text-warn" : "text-soft"} role={state.failed || state.settings === "failed" ? "alert" : undefined}>
             Restored {n(state.saved)} {state.saved === 1 ? "ride" : "rides"}
-            {state.settings ? " and your settings" : ""}.
+            {state.settings === "restored" ? " and your settings" : ""}.
+            {state.settings === "failed" ? " Your settings didn't restore: check your connection and restore the same file again (rides already restored are skipped)." : ""}
             {state.skipped ? ` ${n(state.skipped)} already here, left as they were.` : ""}
             {state.invalid ? ` ${n(state.invalid)} in the file couldn't be read.` : ""}
             {state.failed ? ` ${n(state.failed)} didn't save: check your connection and restore the same file again (rides already restored are skipped).` : ""}

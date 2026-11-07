@@ -10,6 +10,7 @@ import { DEFAULT_TIME_ZONE } from "@/lib/settings";
 import { Card, ModeBar, UnitSwitch } from "./ui";
 import { RideMap, type Segment } from "./RideMap";
 import { RideDetails } from "./RideDetails";
+import { ConfidenceNote } from "./Confidence";
 import { StoryImage } from "./StoryImage";
 import type { Typical } from "@/lib/typical";
 
@@ -168,6 +169,8 @@ export function RideView({
           {deleteError && <p role="alert" className="text-hot">{deleteError}</p>}
         </div>
       )}
+
+      <ConfidenceNote ride={ride} />
 
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line md:grid-cols-3 xl:grid-cols-6">
         {stats.map((x) => (

@@ -45,6 +45,11 @@ export type RideSummary = {
   /** Samples sharing a timestamp (the last one is kept) and frames dropped for a bad checksum. */
   duplicates?: number;
   badFrames?: number;
+  /** False when the file was read without its checksums (see parseRide). */
+  checksumsVerified?: boolean;
+  /** Share of readings (0–1) with a GPS position and with altitude. */
+  gpsShare?: number;
+  altitudeShare?: number;
   /** Averages count only the time each is above zero. W and rpm. */
   riderWAvg?: number;
   riderWMax?: number;
@@ -304,6 +309,9 @@ export function summarise(file: RideFile): { summary: RideSummary; track: TrackP
     unknownS: Math.round(unknownS),
     duplicates,
     badFrames: file.badFrames ?? 0,
+    checksumsVerified: file.checksumsVerified,
+    gpsShare: s.length ? round(s.filter((x) => x.lat !== null && x.lng !== null).length / s.length, 3) : 0,
+    altitudeShare: s.length ? round(s.filter((x) => x.altitude !== null).length / s.length, 3) : 0,
     riderWAvg: avg(power.rider, power.riderS),
     riderWMax: round(power.riderMax, 1),
     motorWAvg: avg(power.motor, power.motorS),

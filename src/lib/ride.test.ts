@@ -243,7 +243,13 @@ test("a file where no checksum matches is still read", () => {
     buf[p + 4 + len] ^= 0x55;
     p += 6 + len;
   }
-  assert.equal(parseRide(buf.buffer).samples.length, 20);
+  const ride = parseRide(buf.buffer);
+  assert.equal(ride.samples.length, 20);
+  // ...but it says so, and keeps the checksum failures (a run of bad frames counts once).
+  assert.equal(ride.checksumsVerified, false);
+  assert.ok(ride.badFrames >= 1);
+  assert.equal(summarise(ride).summary.checksumsVerified, false);
+  assert.equal(parseRide(buildFile(rows.slice(0, 20))).checksumsVerified, true);
 });
 
 test("glitched readings count as nothing: not in energy, zones, peaks or graphs", () => {
