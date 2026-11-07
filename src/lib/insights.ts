@@ -16,7 +16,7 @@ export type ClimbModel = {
 };
 
 /** The rides worth fitting: long enough that a 1% battery step isn't most of the reading. */
-const fitRides = (rides: RideSummary[]) => rides.filter((r) => r.km >= 3 && (r.batteryStart === null || batteryDrop(r) >= 5 || r.motorWh > 0));
+export const fitRides = (rides: RideSummary[]) => rides.filter((r) => r.km >= 3 && (r.batteryStart === null || batteryDrop(r) >= 5 || r.motorWh > 0));
 
 /**
  * Splits each ride's battery use into a cost per km and a cost per metre
@@ -64,6 +64,54 @@ export function hillBands(rides: RideSummary[], s: Settings, efficiency: number)
 
 /* ---------- Range planner ---------- */
 
+/** The planner's cost for a route, before any mode scaling. */
+const routeCost = (route: { km: number; climbM: number }, averageWhPerKm: number, model: ClimbModel | null) =>
+  model ? model.flatWhPerKm * route.km + model.whPerM * route.climbM : averageWhPerKm * route.km;
+
+/** Linear-interpolated quantile of sorted values. */
+function quantile(sorted: number[], q: number) {
+  const i = (sorted.length - 1) * q;
+  const lo = Math.floor(i);
+  return sorted[lo] + (sorted[Math.ceil(i)] - sorted[lo]) * (i - lo);
+}
+
+/** Rides needed before the spread of past rides is used; fewer gets a fixed ±25%. */
+export const MIN_SPREAD_RIDES = 8;
+
+export type PlanSpread = { lo: number; hi: number; rides: number };
+
+/**
+ * How far real rides landed from what the planner would have said for them:
+ * the 10th and 90th percentile of actual over predicted battery use. A route
+ * predicted at 40% then likely takes between 40·lo and 40·hi.
+ */
+export function planSpread(rides: RideSummary[], s: Settings, efficiency: number, averageWhPerKm: number | null, model: ClimbModel | null): PlanSpread {
+  if (!averageWhPerKm) return { lo: 0.75, hi: 1.25, rides: 0 };
+  const ratios = fitRides(rides)
+    .map((r) => packWh(r, s, efficiency) / routeCost({ km: r.km, climbM: r.ascentM }, averageWhPerKm, model))
+    .filter((x) => Number.isFinite(x) && x > 0)
+    .sort((a, b) => a - b);
+  if (ratios.length < MIN_SPREAD_RIDES) return { lo: 0.75, hi: 1.25, rides: ratios.length };
+  // Never narrower than ±5%: the battery gauge itself moves in 1% steps.
+  return { lo: Math.min(0.95, quantile(ratios, 0.1)), hi: Math.max(1.05, quantile(ratios, 0.9)), rides: ratios.length };
+}
+
+export type Verdict = "comfortable" | "tight" | "under-reserve" | "wont-make-it";
+
+/**
+ * Where a ride leaves the battery, from a starting charge: the likely finish
+ * and its range, and whether that keeps the reserve. Percentages of the pack.
+ */
+export function finishCharge(usedPct: number, spread: PlanSpread, startPct: number, reservePct: number) {
+  const expected = startPct - usedPct;
+  const worst = startPct - usedPct * spread.hi;
+  const best = startPct - usedPct * spread.lo;
+  const verdict: Verdict = expected < 0 ? "wont-make-it" : expected < reservePct ? "under-reserve" : worst < reservePct ? "tight" : "comfortable";
+  // How far this mode goes before touching the reserve, as a share of the planned route.
+  const reach = usedPct > 0 ? Math.max(0, startPct - reservePct) / usedPct : Infinity;
+  return { expected, worst, best, verdict, reach };
+}
+
 export type PlanMode = { value: string; name: string; color: string; whPerKm: number | null; seconds: number };
 
 /**
@@ -80,7 +128,7 @@ export function planRide(
   coldExtra: number | null,
 ) {
   if (!averageWhPerKm || route.km <= 0) return [];
-  const routeWh = model ? model.flatWhPerKm * route.km + model.whPerM * route.climbM : averageWhPerKm * route.km;
+  const routeWh = routeCost(route, averageWhPerKm, model);
   return modes
     .filter((m) => m.whPerKm && Number(m.value) !== 0 && m.seconds >= 600)
     .map((m) => {

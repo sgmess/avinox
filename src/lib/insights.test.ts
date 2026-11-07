@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { climbModel, compareRide, effort, findClimbs, hillBands, matchClimb, overlap, cells, planRide, similarRides } from "./insights.ts";
+import { climbModel, compareRide, effort, finishCharge, findClimbs, hillBands, matchClimb, overlap, cells, planRide, planSpread, similarRides } from "./insights.ts";
 import { readBackup } from "./backup.ts";
 import { demoRides } from "./demo.ts";
 import { DEFAULT_SETTINGS } from "./settings.ts";
@@ -123,4 +123,30 @@ test("a gap in the recording adds no time or energy to an effort", () => {
   assert.ok(Math.abs(e.motorWh - (360 * 95) / 3600) < 1e-9, `motorWh ${e.motorWh}`);
   assert.ok(Math.abs(e.riderWh - (200 * 95) / 3600) < 1e-9);
   assert.deepEqual(e.modes, { "2": 1 });
+});
+
+test("the planner's range comes from how past rides landed against it", () => {
+  // Rides that cost exactly what the model says, then a few 20% over and under.
+  const exact = Array.from({ length: 10 }, (_, i) => ride(i, 20 + i, 200 + i * 60));
+  const model = climbModel(exact, S, 0.8)!;
+  const tight = planSpread(exact, S, 0.8, 8, model);
+  assert.equal(tight.rides, 10);
+  // Exact rides still get the ±5% floor for the gauge's 1% steps.
+  assert.ok(Math.abs(tight.lo - 0.95) < 1e-9 && Math.abs(tight.hi - 1.05) < 1e-9, `${tight.lo} ${tight.hi}`);
+  const noisy = exact.map((r, i) => (i % 3 === 0 ? { ...r, batteryEnd: 100 - (100 - r.batteryEnd!) * (i % 2 ? 1.2 : 0.8) } : r));
+  const wide = planSpread(noisy, S, 0.8, 8, climbModel(noisy, S, 0.8));
+  assert.ok(wide.lo < 0.95 && wide.hi > 1.05, `${wide.lo} ${wide.hi}`);
+  // Too few rides: a fixed ±25%.
+  assert.deepEqual(planSpread(exact.slice(0, 3), S, 0.8, 8, model), { lo: 0.75, hi: 1.25, rides: 3 });
+});
+
+test("finishing charge and verdicts", () => {
+  const spread = { lo: 0.8, hi: 1.2, rides: 10 };
+  const ok = finishCharge(40, spread, 100, 15);
+  assert.deepEqual([ok.expected, ok.worst, ok.best, ok.verdict], [60, 52, 68, "comfortable"]);
+  assert.equal(ok.reach, 85 / 40);
+  assert.equal(finishCharge(75, spread, 100, 15).verdict, "tight");
+  assert.equal(finishCharge(90, spread, 100, 15).verdict, "under-reserve");
+  assert.equal(finishCharge(60, spread, 50, 15).verdict, "wont-make-it");
+  assert.equal(finishCharge(0, spread, 80, 10).reach, Infinity);
 });

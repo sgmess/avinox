@@ -1,10 +1,10 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Stats } from "@/lib/stats";
 import { median } from "@/lib/stats";
 import type { Settings, Units } from "@/lib/settings";
-import { HILL_BANDS, climbModel, hillBands, planRide } from "@/lib/insights";
-import { KM_PER_MI, dist, distUnit, fmtDate, height, heightUnit, n, perDist } from "@/lib/format";
+import { HILL_BANDS, MIN_FIT_RIDES, MIN_SPREAD_RIDES, climbModel, finishCharge, hillBands, planRide, planSpread, type Verdict } from "@/lib/insights";
+import { KM_PER_MI, dist, distUnit, fmtDate, fmtDist, height, heightUnit, n, perDist } from "@/lib/format";
 import { Card, Empty } from "./ui";
 
 const FT_PER_M = 3.28084;
@@ -13,22 +13,63 @@ const FT_PER_MI_PER_M_PER_KM = FT_PER_M * KM_PER_MI;
 
 /* ---------- Range planner ---------- */
 
+const PLANNER_PREFS = "planner-charge";
+
+const VERDICT: Record<Verdict, { label: string; tone: string }> = {
+  comfortable: { label: "Comfortable", tone: "text-good" },
+  tight: { label: "Tight", tone: "text-warn" },
+  "under-reserve": { label: "Into your reserve", tone: "text-hot" },
+  "wont-make-it": { label: "Won't make it", tone: "text-hot" },
+};
+
+/** A whole percentage from a text box, or the fallback. */
+const pctIn = (v: string, fallback: number) => {
+  const x = Number(v);
+  return v.trim() !== "" && Number.isFinite(x) ? Math.max(0, Math.min(100, x)) : fallback;
+};
+
 export function PlannerCard({ st, settings }: { st: Stats; settings: Settings }) {
   const u = settings.units;
   const model = useMemo(() => climbModel(st.rides, settings, st.efficiency), [st.rides, settings, st.efficiency]);
+  const spread = useMemo(() => planSpread(st.rides, settings, st.efficiency, st.totals.whPerKm, model), [st.rides, settings, st.efficiency, st.totals.whPerKm, model]);
   const usual = useMemo(() => ({ km: median(st.rides.map((r) => r.km)) ?? 30, m: median(st.rides.map((r) => r.ascentM)) ?? 500 }), [st.rides]);
   // Typed in the rider's units, kept as text so the box can be cleared while typing.
   const [distance, setDistance] = useState(() => String(Math.round(dist(usual.km, u))));
   const [climb, setClimb] = useState(() => String(Math.round(height(usual.m, u) / 10) * 10));
   const [cold, setCold] = useState(false);
+  const [start, setStart] = useState("100");
+  const [reserve, setReserve] = useState("15");
+  // The charge boxes are remembered on this device; the route isn't (it changes every time).
+  useEffect(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem(PLANNER_PREFS) ?? "{}");
+      if (typeof p.start === "string") setStart(p.start);
+      if (typeof p.reserve === "string") setReserve(p.reserve);
+    } catch {
+      // Storage blocked: the defaults are fine.
+    }
+  }, []);
+  function remember(next: { start?: string; reserve?: string }) {
+    try {
+      localStorage.setItem(PLANNER_PREFS, JSON.stringify({ start, reserve, ...next }));
+    } catch {
+      // As above.
+    }
+  }
   const km = (Number(distance) || 0) * (u === "mi" ? KM_PER_MI : 1);
   const climbM = (Number(climb) || 0) / (u === "mi" ? FT_PER_M : 1);
+  const startPct = pctIn(start, 100);
+  const reservePct = Math.min(startPct, pctIn(reserve, 0));
   const usableWh = st.health?.usableWh ?? settings.batteryWh;
   const plan = planRide({ km, climbM }, st.modes, st.totals.whPerKm, model, usableWh, st.coldExtra);
   const input = "min-h-11 w-28 rounded-[10px] border border-edge bg-sunk px-3 text-sm";
+  const spreadNote =
+    spread.rides >= MIN_SPREAD_RIDES
+      ? `The range is where 8 in 10 of your ${spread.rides} past rides landed against what this would have said for them.`
+      : `The range is ±25% until there are ${MIN_SPREAD_RIDES} or more rides to measure it from.`;
 
   return (
-    <Card title="Range planner" badge="New" sub="Enter a ride and see how much battery each mode would take, from your own rides.">
+    <Card title="Range planner" badge="New" sub="Enter a ride and your battery, and see where each mode would leave you.">
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-sm text-muted">
           Distance ({distUnit(u)})
@@ -38,6 +79,36 @@ export function PlannerCard({ st, settings }: { st: Stats; settings: Settings })
           Climbing ({heightUnit(u)})
           <input className={input} type="number" min={0} max={20000} step={u === "mi" ? 100 : 50} inputMode="numeric" value={climb} onChange={(e) => setClimb(e.target.value)} />
         </label>
+        <label className="flex flex-col gap-1 text-sm text-muted">
+          Starting charge (%)
+          <input
+            className={input}
+            type="number"
+            min={1}
+            max={100}
+            inputMode="numeric"
+            value={start}
+            onChange={(e) => {
+              setStart(e.target.value);
+              remember({ start: e.target.value });
+            }}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm text-muted">
+          Finish with at least (%)
+          <input
+            className={input}
+            type="number"
+            min={0}
+            max={100}
+            inputMode="numeric"
+            value={reserve}
+            onChange={(e) => {
+              setReserve(e.target.value);
+              remember({ reserve: e.target.value });
+            }}
+          />
+        </label>
         {st.coldExtra !== null && st.coldExtra > 0.02 && (
           <label className="flex min-h-11 items-center gap-2 text-sm text-soft">
             <input type="checkbox" checked={cold} onChange={(e) => setCold(e.target.checked)} />
@@ -46,30 +117,48 @@ export function PlannerCard({ st, settings }: { st: Stats; settings: Settings })
         )}
       </div>
       {plan.length ? (
-        <div className="mt-4 flex flex-col gap-2.5">
+        <div className="mt-4 flex flex-col gap-3">
           {plan.map((p) => {
-            const pct = cold && p.coldPct !== null ? p.coldPct : p.pct;
-            const over = pct > 100;
+            const used = cold && p.coldPct !== null ? p.coldPct : p.pct;
+            const f = finishCharge(used, spread, startPct, reservePct);
+            const v = VERDICT[f.verdict];
+            const clamp = (x: number) => Math.max(0, Math.min(100, x));
+            const reach = Number.isFinite(f.reach) ? f.reach * km : null;
             return (
-              <div key={p.value} className="grid grid-cols-[72px_minmax(0,1fr)_auto] items-center gap-3">
+              <div key={p.value} className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 sm:grid-cols-[72px_minmax(0,1fr)_200px]">
                 <span className="flex items-center gap-2 text-sm">
                   <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: p.color }} />
                   {p.name}
                 </span>
-                <div className="h-3 overflow-hidden rounded bg-line">
-                  <div className="h-3 rounded" style={{ width: `${Math.min(100, pct)}%`, background: over ? "var(--hot)" : p.color }} />
+                <div
+                  className="relative h-3.5 overflow-hidden rounded bg-line"
+                  role="img"
+                  aria-label={`${p.name}: finish on about ${n(f.expected)}%, likely ${n(f.worst)} to ${n(f.best)}%, reserve ${n(reservePct)}%`}
+                >
+                  {/* Your reserve, then the charge left at the finish, then how far either way it's likely to land. */}
+                  <div className="absolute inset-y-0 left-0 bg-hot/25" style={{ width: `${reservePct}%` }} />
+                  <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${clamp(f.expected)}%`, background: p.color }} />
+                  <div className="absolute inset-y-0 opacity-40" style={{ left: `${clamp(f.worst)}%`, width: `${clamp(f.best) - clamp(f.worst)}%`, background: p.color }} />
+                  <div className="absolute inset-y-0 w-0.5 bg-hot" style={{ left: `calc(${reservePct}% - 1px)` }} />
                 </div>
-                <span className={`w-36 text-right text-sm ${over ? "text-hot" : ""}`}>
-                  <b>{over ? "over 100" : n(pct)}%</b> <span className="text-muted">· {over ? "won't make it" : `${n(100 - pct)}% left`}</span>
-                </span>
+                <div className="col-start-2 text-sm sm:col-start-auto sm:text-right">
+                  <b className={f.expected < 0 ? "text-hot" : ""}>{f.expected < 0 ? "Runs out" : `Ends on ${n(f.expected)}%`}</b>{" "}
+                  <span className="text-muted">
+                    ({f.worst < 0 ? "empty" : `${n(f.worst)}%`}–{n(clamp(f.best))}%)
+                  </span>
+                  <div className="text-xs">
+                    <span className={v.tone}>{v.label}</span>
+                    {reach !== null && reach > 0 && <span className="text-muted"> · {fmtDist(reach, u, reach < 10 ? 1 : 0)} to your reserve</span>}
+                  </div>
+                </div>
               </div>
             );
           })}
           <p className="mt-1 text-xs text-muted">
             {model
-              ? `On a full battery (${n(usableWh)} Wh usable). Climbing priced from ${model.rides} rides at ${n(model.whPerM * 100, 1)} Wh per 100 m.`
-              : `On a full battery (${n(usableWh)} Wh usable). Climbing isn't counted yet: that needs ${8} or more rides with different amounts of climbing.`}{" "}
-            Your speed and the weather move it either way.
+              ? `From ${n(startPct)}% of ${n(usableWh)} Wh usable. Climbing priced from ${model.rides} rides at ${n(model.whPerM * 100, 1)} Wh per 100 m.`
+              : `From ${n(startPct)}% of ${n(usableWh)} Wh usable. Climbing isn't counted yet: that needs ${MIN_FIT_RIDES} or more rides with different amounts of climbing.`}{" "}
+            {spreadNote} Tight means the likely range dips into your reserve.
           </p>
         </div>
       ) : (
