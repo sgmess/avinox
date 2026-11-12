@@ -161,13 +161,16 @@ export function overlap(a: Set<string>, b: Set<string>) {
   return both / (a.size + b.size - both);
 }
 
+/** A ride to compare against: its route, and (when stored) the squares it passes through, so the route needn't be loaded to rule it out. */
+export type Other = { ride: RideSummary; track: TrackPoint[]; cells?: Set<string> };
+
 /** Rides that mostly follow the same roads and trails and are about as long. */
-export function similarRides(ride: RideSummary, track: TrackPoint[], others: { ride: RideSummary; track: TrackPoint[] }[], minOverlap = 0.45) {
+export function similarRides(ride: RideSummary, track: TrackPoint[], others: Other[], minOverlap = 0.45) {
   const mine = cells(track);
   if (!mine.size) return [];
   return others
     .filter((o) => o.ride.id !== ride.id && Math.abs(o.ride.km - ride.km) <= Math.max(1, ride.km * 0.25))
-    .map((o) => ({ ...o, overlap: overlap(mine, cells(o.track)) }))
+    .map((o) => ({ ...o, overlap: overlap(mine, o.cells ?? cells(o.track)) }))
     .filter((o) => o.overlap >= minOverlap)
     .sort((a, b) => b.overlap - a.overlap);
 }
@@ -218,8 +221,11 @@ export function findClimbs(track: TrackPoint[], minGain = 40): Climb[] {
 }
 
 export type Effort = {
+  /** Recorded time and distance: stretches with no readings are in gapS, not here. */
   seconds: number;
   km: number;
+  /** Seconds of the stretch with no readings. Above zero, the real time isn't known. */
+  gapS: number;
   gainM: number;
   riderWh: number;
   motorWh: number;
@@ -249,10 +255,15 @@ export function effort(track: TrackPoint[], from: number, to: number, limit = ga
   let riderWh = 0;
   let motorWh = 0;
   let seconds = 0;
+  let km = 0;
+  let gapS = 0;
   const modeS: Record<string, number> = {};
   for (let i = from; i < to; i++) {
     const step = track[i + 1].s - track[i].s;
     const dt = step > 0 && step <= limit ? step : 0;
+    // Distance and time from the same stretches, so a gap can't make the speed look higher.
+    if (dt) km += Math.max(0, track[i + 1].km - track[i].km);
+    else gapS += Math.max(0, step);
     seconds += dt;
     riderWh += (track[i].riderW * dt) / 3600;
     motorWh += (track[i].motorW * dt) / 3600;
@@ -264,7 +275,8 @@ export function effort(track: TrackPoint[], from: number, to: number, limit = ga
   const b1 = track[to].battery;
   return {
     seconds,
-    km: track[to].km - track[from].km,
+    km,
+    gapS,
     gainM: Math.max(0, (track[to].alt ?? 0) - (track[from].alt ?? 0)),
     riderWh,
     motorWh,
@@ -297,11 +309,36 @@ export function matchClimb(source: TrackPoint[], climb: Climb, other: TrackPoint
   return best && { from: best.from, to: best.to };
 }
 
+/** The climbs the comparison page shows. */
+export const topClimbs = (track: TrackPoint[]) => findClimbs(track).slice(0, 3);
+
+/** The square a point is in, and those around it: anything within a couple of hundred metres is in one of them. */
+function near(p: { lat: number; lng: number }) {
+  const a = Math.round(p.lat / 0.0018);
+  const b = Math.round((p.lng * Math.cos((p.lat * Math.PI) / 180)) / 0.0018);
+  const out: string[] = [];
+  // East-west indexes shift slightly with latitude, so look one square further that way.
+  for (let i = -1; i <= 1; i++) for (let j = -2; j <= 2; j++) out.push(`${a + i}:${b + j}`);
+  return out;
+}
+
+/**
+ * Which other rides could have ridden one of this ride's climbs: those whose
+ * squares come near both its start and its top. Only these need their full
+ * route loaded to compare the climb.
+ */
+export function climbCandidates(track: TrackPoint[], others: { id: string; cells: Set<string> }[]): string[] {
+  const ends = topClimbs(track)
+    .map((c) => [track[c.from], track[c.to]] as const)
+    .filter((e): e is readonly [TrackPoint & { lat: number; lng: number }, TrackPoint & { lat: number; lng: number }] => hasGps(e[0]) && hasGps(e[1]))
+    .map(([start, top]) => [near(start), near(top)] as const);
+  return others.filter((o) => ends.some(([start, top]) => start.some((c) => o.cells.has(c)) && top.some((c) => o.cells.has(c)))).map((o) => o.id);
+}
+
 /** Everything the comparison page shows for one ride, worked out on the server. */
-export function compareRide(ride: RideSummary, track: TrackPoint[], all: { ride: RideSummary; track: TrackPoint[] }[]) {
+export function compareRide(ride: RideSummary, track: TrackPoint[], all: Other[]) {
   const similar = similarRides(ride, track, all).map((o) => ({ ride: o.ride, overlap: o.overlap }));
-  const climbs = findClimbs(track)
-    .slice(0, 3)
+  const climbs = topClimbs(track)
     .map((climb) => ({
       climb,
       efforts: all

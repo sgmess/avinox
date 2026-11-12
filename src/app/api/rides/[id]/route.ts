@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getViewer } from "@/lib/auth";
-import { ridesCol, tracksCol } from "@/lib/firebase-admin";
+import { ridesCol, shapesCol, tracksCol } from "@/lib/firebase-admin";
 import { RIDE_ID, asObject, cleanText } from "@/lib/validate";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -27,6 +27,6 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   if (!viewer) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
   const { id } = await params;
   if (!RIDE_ID.test(id)) return NextResponse.json({ error: "No such ride" }, { status: 404 });
-  await Promise.all([ridesCol(viewer.uid).doc(id).delete(), tracksCol(viewer.uid).doc(id).delete()]);
+  await Promise.all([ridesCol(viewer.uid).doc(id).delete(), tracksCol(viewer.uid).doc(id).delete(), shapesCol(viewer.uid).doc(id).delete()]);
   return NextResponse.json({ ok: true });
 }

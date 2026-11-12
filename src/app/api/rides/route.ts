@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getViewer } from "@/lib/auth";
-import { ridesCol, tracksCol, db } from "@/lib/firebase-admin";
+import { ridesCol, shapesCol, tracksCol, db } from "@/lib/firebase-admin";
+import { shapeOf } from "@/lib/heat";
 import { asObject, cleanSummary, cleanTrack } from "@/lib/validate";
 
 /** The ids already saved, so the import can skip rides it has seen. */
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
   // Replace computed maps as whole fields, retaining the stored name and notes.
   batch.set(ref, summary, { mergeFields: Object.keys(summary) });
   batch.set(tracksCol(viewer.uid).doc(summary.id), { points: track });
+  batch.set(shapesCol(viewer.uid).doc(summary.id), shapeOf(track));
   await batch.commit();
   return NextResponse.json({ ok: true, id: summary.id });
 }
@@ -33,6 +35,6 @@ export async function POST(req: Request) {
 export async function DELETE() {
   const viewer = await getViewer();
   if (!viewer) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
-  await Promise.all([db.recursiveDelete(ridesCol(viewer.uid)), db.recursiveDelete(tracksCol(viewer.uid))]);
+  await Promise.all([db.recursiveDelete(ridesCol(viewer.uid)), db.recursiveDelete(tracksCol(viewer.uid)), db.recursiveDelete(shapesCol(viewer.uid))]);
   return NextResponse.json({ ok: true });
 }

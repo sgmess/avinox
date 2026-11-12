@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { climbModel, compareRide, effort, finishCharge, findClimbs, hillBands, matchClimb, overlap, cells, planRide, planSpread, similarRides } from "./insights.ts";
+import { climbCandidates, climbModel, compareRide, effort, finishCharge, findClimbs, hillBands, matchClimb, overlap, cells, planRide, planSpread, similarRides } from "./insights.ts";
 import { readBackup } from "./backup.ts";
 import { demoRides } from "./demo.ts";
+import { heatFromShapes, heatRoutes, readShape, shapeOf } from "./heat.ts";
+import { cleanSummary } from "./validate.ts";
 import { DEFAULT_SETTINGS } from "./settings.ts";
 import type { RideSummary, TrackPoint } from "./ride.ts";
 
@@ -120,6 +122,10 @@ test("a gap in the recording adds no time or energy to an effort", () => {
   const track = Array.from({ length: 21 }, (_, i) => ({ ...p, km: i * 0.03, s: i * 5 + (i > 10 ? 3600 : 0) }));
   const e = effort(track, 0, 20);
   assert.equal(e.seconds, 95);
+  // Distance comes from the same recorded stretches, so the speed isn't inflated, and the gap is reported.
+  assert.ok(Math.abs(e.km - 19 * 0.03) < 1e-9, `km ${e.km}`);
+  assert.equal(e.gapS, 3605);
+  assert.equal(effort(track, 0, 10).gapS, 0);
   assert.ok(Math.abs(e.motorWh - (360 * 95) / 3600) < 1e-9, `motorWh ${e.motorWh}`);
   assert.ok(Math.abs(e.riderWh - (200 * 95) / 3600) < 1e-9);
   assert.deepEqual(e.modes, { "2": 1 });
@@ -149,4 +155,39 @@ test("finishing charge and verdicts", () => {
   assert.equal(finishCharge(90, spread, 100, 15).verdict, "under-reserve");
   assert.equal(finishCharge(60, spread, 50, 15).verdict, "wont-make-it");
   assert.equal(finishCharge(0, spread, 80, 10).reach, Infinity);
+});
+
+test("shapes stand in for full routes: same heatmap, same similar rides, and only climb candidates need loading", () => {
+  const { summaries, tracks } = demoRides();
+  const shapes = Object.fromEntries(summaries.map((r) => [r.id, shapeOf(tracks[r.id])]));
+  // Survives being stored and read back.
+  assert.deepEqual(readShape(JSON.parse(JSON.stringify(shapes[summaries[0].id]))), shapes[summaries[0].id]);
+  assert.equal(readShape({ cells: "x" }), null);
+  assert.deepEqual(heatFromShapes(summaries, shapes), heatRoutes(summaries, tracks));
+
+  const hilly = summaries.find((r) => r.ascentM > 300)!;
+  const full = compareRide(hilly, tracks[hilly.id], summaries.map((r) => ({ ride: r, track: tracks[r.id] })));
+  // The page's way: squares for everyone, full routes only for rides that passed the climbs.
+  const others = summaries.filter((r) => r.id !== hilly.id).map((r) => ({ id: r.id, cells: new Set(shapes[r.id].cells) }));
+  const load = new Set(climbCandidates(tracks[hilly.id], others));
+  assert.ok(load.size < others.length, `loads ${load.size} of ${others.length}`);
+  const lean = compareRide(
+    hilly,
+    tracks[hilly.id],
+    summaries.map((r) => ({ ride: r, track: r.id === hilly.id || load.has(r.id) ? tracks[r.id] : [], cells: new Set(shapes[r.id].cells) })),
+  );
+  assert.deepEqual(lean, full);
+});
+
+test("a ride saved before the detailed stats keeps them missing through a restore, not zero", () => {
+  const { summaries } = demoRides();
+  const old: Record<string, unknown> = { ...summaries[0] };
+  for (const k of ["observedS", "unknownS", "duplicates", "badFrames", "riderWAvg", "motorWAvg", "cadenceAvg", "torqueZoneS", "wattZoneS", "gearPedalS", "gearChanges", "gradeUpPct", "gradeDownPct", "checksumsVerified", "movingKm", "gpsShare", "altitudeShare"]) delete old[k];
+  const cleaned = cleanSummary(old)!;
+  assert.equal(cleaned.observedS, undefined);
+  assert.equal(cleaned.wattZoneS, undefined);
+  assert.equal(cleaned.motorWAvg, undefined);
+  assert.equal(cleaned.km, summaries[0].km);
+  // A current ride keeps everything.
+  assert.deepEqual(cleanSummary(summaries[0]), summaries[0]);
 });

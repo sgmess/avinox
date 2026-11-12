@@ -38,7 +38,7 @@ The files are read **in the browser** (`src/lib/parseRide.ts`). Only each ride's
 
 ## Privacy
 
-Each rider's data lives under `riders/{uid}` (settings), `riders/{uid}/rides/{id}` (summaries) and `riders/{uid}/tracks/{id}` (routes), read and written only by the server for the signed-in rider. Firestore rules deny all browser access. Pages need sign-in except `/demo` and `/login`, and the site asks search engines not to index it.
+Each rider's data lives under `riders/{uid}` (settings), `riders/{uid}/rides/{id}` (summaries), `riders/{uid}/tracks/{id}` (routes) and `riders/{uid}/shapes/{id}` (a few kB of each route: the squares it passes through and a thinned line, so the heatmap and compare pages needn't load every full route), read and written only by the server for the signed-in rider. Firestore rules deny all browser access. Pages need sign-in except `/demo` and `/login`, and the site asks search engines not to index it.
 
 The site sends no analytics or tracking. Sign out everywhere (Settings) revokes every session the rider has.
 
@@ -50,7 +50,9 @@ npx firebase-tools emulators:start --only firestore,auth --project demo-ride   #
 export NEXT_PUBLIC_FIREBASE_CONFIG='{"apiKey":"demo-key","authDomain":"demo-ride.firebaseapp.com","projectId":"demo-ride"}'
 export NEXT_PUBLIC_AUTH_EMULATOR=http://127.0.0.1:9099
 GCLOUD_PROJECT=demo-ride FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 npm run dev
-npm test
+npm test            # library tests (node --test)
+npm run test:api    # API route tests (Vitest, in-memory Firestore: tests/api)
+npm run check       # type check, lint, both test suites and a build, as CI runs on every pull request
 ```
 
 ## Deploying (Firebase App Hosting)
@@ -84,3 +86,7 @@ The map includes a public CARTO basemap key. To use a different key, set
 | `src/lib/backup.ts`, `src/app/api/backup/` | Backup export and restore |
 | `src/components/Importer.tsx` | Drop files or a folder; parses, skips known rides, saves three at a time |
 | `src/app/api/` | Session cookie, rides, settings |
+| `src/lib/heat.ts`, `src/lib/data.ts` | Route shapes, and reading rides, routes and shapes from Firestore |
+| `src/lib/confidence.ts` | Each ride's data confidence rating |
+| `tests/api/` | API route tests and the in-memory Firestore they run against |
+| `.github/workflows/ci.yml` | Checks run on every pull request and push to `main` |
