@@ -12,7 +12,9 @@ export const adminAuth = getAuth(app);
 export const db = getFirestore(app);
 
 // One document per rider holding their settings, with each ride's summary in
-// `rides` and its thinned route and graphs in `tracks`. Only the server reads them.
+// `rides`, its thinned route and graphs in `tracks`, and a few kB of that route
+// in `shapes` for the pages that look across every ride. Only the server reads them.
 export const userDoc = (uid: string) => db.collection("riders").doc(uid);
 export const ridesCol = (uid: string) => userDoc(uid).collection("rides");
 export const tracksCol = (uid: string) => userDoc(uid).collection("tracks");
+export const shapesCol = (uid: string) => userDoc(uid).collection("shapes");

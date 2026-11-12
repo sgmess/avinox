@@ -216,13 +216,26 @@ function readFrames(bytes: Uint8Array, view: DataView, checkCrc: boolean) {
   return { samples, badFrames };
 }
 
+export const RIDE_HEADER_BYTES = HEADER_SIZE;
+
+/**
+ * What the header alone says about a ride: enough to name it (see rideId)
+ * without reading its samples. Takes the whole file or just its first
+ * RIDE_HEADER_BYTES.
+ */
+export function rideHeader(buffer: ArrayBuffer) {
+  if (!isRideFile(buffer)) throw new Error("This isn't an Avinox ride file.");
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  let serial = "";
+  for (let i = 110; i < 128 && bytes[i]; i++) serial += String.fromCharCode(bytes[i]);
+  return { rideId: view.getUint32(6, true), serial, start: view.getUint32(10, true), end: view.getUint32(14, true), ascentM: view.getFloat32(22, true), descentM: view.getFloat32(26, true) };
+}
+
 export function parseRide(buffer: ArrayBuffer): RideFile {
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
-  if (!isRideFile(buffer)) throw new Error("This isn't an Avinox ride file.");
-
-  let serial = "";
-  for (let i = 110; i < 128 && bytes[i]; i++) serial += String.fromCharCode(bytes[i]);
+  const header = rideHeader(buffer);
 
   let { samples, badFrames } = readFrames(bytes, view, true);
   let checksumsVerified = true;
@@ -237,12 +250,7 @@ export function parseRide(buffer: ArrayBuffer): RideFile {
   }
 
   return {
-    rideId: view.getUint32(6, true),
-    serial,
-    start: view.getUint32(10, true),
-    end: view.getUint32(14, true),
-    ascentM: view.getFloat32(22, true),
-    descentM: view.getFloat32(26, true),
+    ...header,
     samples: samples.filter((s) => s.t > 0),
     badFrames,
     checksumsVerified,

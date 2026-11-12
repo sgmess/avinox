@@ -1,8 +1,8 @@
 "use client";
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { isRideFile, parseRide } from "@/lib/parseRide";
-import { summarise } from "@/lib/ride";
+import { RIDE_HEADER_BYTES, isRideFile, parseRide, rideHeader } from "@/lib/parseRide";
+import { rideId, summarise } from "@/lib/ride";
 import { fmtDay, n } from "@/lib/format";
 
 type Job = { name: string; body: string; label: string };
@@ -92,12 +92,17 @@ export function Importer() {
     const unverified: Problem[] = [];
     for (const f of candidates) {
       try {
-        const buf = await f.arrayBuffer();
-        if (!isRideFile(buf)) {
+        // The header names the ride, so one already here is skipped without reading the rest of its file.
+        const head = await f.slice(0, RIDE_HEADER_BYTES).arrayBuffer();
+        if (!isRideFile(head)) {
           unreadable.push({ name: f.name, why: "not a ride recording (wrong file header)" });
           continue;
         }
-        const { summary, track } = summarise(parseRide(buf));
+        if (!updateExisting && seen.has(rideId(rideHeader(head)))) {
+          skipped.push({ name: f.name, why: "already imported" });
+          continue;
+        }
+        const { summary, track } = summarise(parseRide(await f.arrayBuffer()));
         if (summary.km < 0.05 && summary.movingS < 60) {
           skipped.push({ name: f.name, why: "too short: under 50 m and under a minute of riding" });
           continue;
@@ -105,10 +110,6 @@ export function Importer() {
         const twin = queued.get(summary.id);
         if (twin) {
           skipped.push({ name: f.name, why: `a smaller copy of ${twin}` });
-          continue;
-        }
-        if (!updateExisting && seen.has(summary.id)) {
-          skipped.push({ name: f.name, why: "already imported" });
           continue;
         }
         queued.set(summary.id, f.name);

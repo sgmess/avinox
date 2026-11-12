@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types src/lib/*.test.ts"
+    "test": "node --test --experimental-strip-types src/lib/*.test.ts",
+    "test:api": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm test && npm run test:api && npm run build"
   },
   "dependencies": {
     "firebase": "^13.1.0",
@@ -22,12 +25,13 @@
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/leaflet": "^1.9.12",
-    "@types/node": "^20",
+    "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.27",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.1.0"
   }
 }

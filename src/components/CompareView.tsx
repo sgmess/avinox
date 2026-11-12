@@ -136,13 +136,15 @@ function effortParts(e: Effort, s: Settings) {
 
 function ClimbCard({ index, c, ride, settings, base }: { index: number; c: Comparison["climbs"][number]; ride: RideSummary; settings: Settings; base: string }) {
   const u = settings.units;
-  const fastest = c.efforts.reduce<(typeof c.efforts)[number] | null>((a, b) => (!a || b.effort.seconds < a.effort.seconds ? b : a), null);
+  // A climb with part of it unrecorded has no known time, so it can't be the fastest.
+  const whole = c.efforts.filter((x) => x.effort.gapS === 0);
+  const fastest = whole.reduce<(typeof c.efforts)[number] | null>((a, b) => (!a || b.effort.seconds < a.effort.seconds ? b : a), null);
   return (
     <Card
       title={`Climb ${index + 1}: ${fmtDist(c.climb.km, u, 1)}, +${fmtHeight(c.climb.gainM, u)} at ${n(c.climb.gradePct, 1)}%`}
       sub={
         c.efforts.length > 1
-          ? `Ridden ${c.efforts.length} times. Fastest ${fmtDuration(fastest!.effort.seconds)} on ${fmtDate(fastest!.ride.start, settings.timeZone)}.`
+          ? `Ridden ${c.efforts.length} times.${fastest ? ` Fastest ${fmtDuration(fastest.effort.seconds)} on ${fmtDate(fastest.ride.start, settings.timeZone)}.` : ""}`
           : "Only ridden on this ride so far."
       }
     >
@@ -167,7 +169,8 @@ function ClimbCard({ index, c, ride, settings, base }: { index: number; c: Compa
                 </td>
                 <td className="py-2 pr-3">
                   {fmtDuration(e.seconds)}
-                  {fastest && r.id === fastest.ride.id && c.efforts.length > 1 && <span className="ml-1.5 rounded-full bg-good-soft px-1.5 text-[11px] text-good">fastest</span>}
+                  {fastest && r.id === fastest.ride.id && whole.length > 1 && <span className="ml-1.5 rounded-full bg-good-soft px-1.5 text-[11px] text-good">fastest</span>}
+                  {e.gapS > 0 && <div className="text-xs text-warn">plus {e.gapS < 60 ? `${Math.round(e.gapS)} s` : fmtDuration(e.gapS)} not recorded: figures cover the rest</div>}
                 </td>
                 <td className="py-2 pr-3">{e.seconds ? fmtSpeed(e.km / (e.seconds / 3600), u) : "–"}</td>
                 <td className="py-2 pr-3">{e.seconds ? `${n((e.riderWh * 3600) / e.seconds)} W` : "–"}</td>

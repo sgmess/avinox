@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { crc16, parseRide } from "./parseRide.ts";
-import { TRACK_POINTS, summarise } from "./ride.ts";
+import { RIDE_HEADER_BYTES, crc16, parseRide, rideHeader } from "./parseRide.ts";
+import { TRACK_POINTS, rideId, summarise } from "./ride.ts";
 import { avgKmh, batteryDrop, computeStats, modeParts, packWh } from "./stats.ts";
 import { demoRides } from "./demo.ts";
 import { DEFAULT_SETTINGS, cleanSettings, modeName } from "./settings.ts";
@@ -312,4 +312,11 @@ test("rides use the pack they were ridden on", () => {
   const s = { ...DEFAULT_SETTINGS, batteryWh: 800, batteryHistory: [{ until: summary.start + 1, wh: 600 }] };
   assert.equal(packWh(summary, s, 0.8), 600 * 0.19);
   assert.equal(packWh({ ...summary, start: summary.start + 10 }, s, 0.8), 800 * 0.19);
+});
+
+test("the header alone names the ride, as the importer uses to skip ones already saved", () => {
+  const buf = buildFile(rows);
+  const head = buf.slice(0, RIDE_HEADER_BYTES);
+  assert.equal(rideId(rideHeader(head)), summarise(parseRide(buf)).summary.id);
+  assert.throws(() => rideHeader(new ArrayBuffer(RIDE_HEADER_BYTES)), /isn't an Avinox ride file/);
 });
